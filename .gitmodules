@@ -1,3 +1,6 @@
 [submodule "polygeist"]
 	path = polygeist
 	url = git@github.com:hanchenye/Polygeist.git
+[submodule "samples/pytorch/llms"]
+	path = samples/pytorch/llms
+	url = git@github.com:8u9mak3r/SeekDeeper.git
