@@ -44,6 +44,8 @@ static SmallString<16> getTypeName(Value val) {
     return SmallString<16>("float");
   else if (valType.isa<Float64Type>())
     return SmallString<16>("double");
+  else if (valType.isa<Float16Type>())
+    return SmallString<16>("half");
 
   // Handle integer types.
   else if (valType.isa<IndexType>())
@@ -188,6 +190,12 @@ static SmallString<8> getConstantString(Type type, Attribute attr) {
     } else if (floatType.getWidth() == 64) {
       string.append("(double)");
       auto value = attr.cast<FloatAttr>().getValue().convertToDouble();
+      string.append(std::isfinite(value)
+                        ? std::to_string(value)
+                        : (value > 0 ? "INFINITY" : "-INFINITY"));
+    } else if (floatType.getWidth() == 16) {
+      string.append("(half)");
+      auto value = attr.cast<FloatAttr>().getValue().convertToFloat();
       string.append(std::isfinite(value)
                         ? std::to_string(value)
                         : (value > 0 ? "INFINITY" : "-INFINITY"));

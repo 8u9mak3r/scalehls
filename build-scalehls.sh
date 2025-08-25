@@ -50,7 +50,9 @@ if [ ! -f "CMakeCache.txt" ]; then
     -DLLVM_PARALLEL_LINK_JOBS="${JOBS:=}" \
     -DLLVM_USE_LINKER=lld \
     -DCMAKE_C_COMPILER=clang \
-    -DCMAKE_CXX_COMPILER=clang++
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLLVM_CCACHE_BUILD=ON \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 fi
 
 # Run building.

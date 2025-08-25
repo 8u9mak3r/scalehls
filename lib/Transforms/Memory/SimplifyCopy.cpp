@@ -198,7 +198,7 @@ struct SimplifyCopy : public SimplifyCopyBase<SimplifyCopy> {
     auto context = func.getContext();
 
     mlir::RewritePatternSet patterns(context);
-    patterns.add<SplitElementwiseGenericOp>(context);
+    // patterns.add<SplitElementwiseGenericOp>(context);
     patterns.add<SimplifyBufferCopy>(context);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
   }

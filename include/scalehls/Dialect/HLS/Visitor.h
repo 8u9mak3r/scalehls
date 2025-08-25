@@ -68,7 +68,7 @@ public:
 
             // Special expressions.
             arith::SelectOp, arith::ConstantOp, arith::TruncIOp,
-            arith::TruncFOp, arith::ExtUIOp, arith::ExtSIOp, arith::IndexCastOp,
+            arith::TruncFOp, arith::ExtUIOp, arith::ExtSIOp, arith::ExtFOp, arith::IndexCastOp,
             arith::UIToFPOp, arith::SIToFPOp, arith::FPToSIOp, arith::FPToUIOp>(
             [&](auto opNode) -> ResultType {
               return thisCast->visitOp(opNode, args...);

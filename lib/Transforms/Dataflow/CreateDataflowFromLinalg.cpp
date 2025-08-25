@@ -155,7 +155,7 @@ struct BackwardFuseGenericOp : public OpRewritePattern<linalg::GenericOp> {
 static void
 populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
   auto context = patterns.getContext();
-  patterns.add<BackwardFuseGenericOp>(context);
+  // patterns.add<BackwardFuseGenericOp>(context);
   patterns.add<ForwardFuseGenericOp>(context);
   patterns.add<ForwardFuseOp<linalg::FillOp>>(context);
   patterns.add<ForwardFuseOp<tensor::EmptyOp>>(context);
