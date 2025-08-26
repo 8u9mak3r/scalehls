@@ -761,10 +761,35 @@ template <typename AssignOpType>
 void ModuleEmitter::emitAssign(AssignOpType op) {
   unsigned rank = emitNestedLoopHeader(op.getResult());
   indent();
-  emitValue(op.getResult(), rank);
+
+  Value result = op.getResult();
+  Value operand = op.getOperand();
+  Type resultType = result.getType();
+  Type operandType = operand.getType();
+  
+  emitValue(result, rank);
   os << " = ";
-  emitValue(op.getOperand(), rank);
-  os << ";";
+
+  // Compulsory type convertion
+  if (resultType != operandType) {
+    if (resultType.isF16() && operandType.isF32()) { // case 1: float -> half(f32 -> f16)
+      os << "static_cast<half>(";
+      emitValue(operand, rank);
+      os << ");  // Assign op emitted ";
+    } else if (resultType.isF32() && operandType.isF16()) { // case 2: half -> float(f16 -> f32)
+      os << "static_cast<float>(";
+      emitValue(operand, rank);
+      os << ");  // Assign op emitted ";
+    } else if (resultType.isF16() && operandType.isInteger(8)) { // case 3: ap_int<8> -> half(i8 -> f16)
+      os << "static_cast<half>((int)";
+      emitValue(operand, rank);
+      os << ");  // Assign op emitted ";
+    }
+  } else {
+    emitValue(operand, rank);
+    os << ";  // Assign op emitted ";
+  }
+
   emitInfoAndNewLine(op);
   emitNestedLoopFooter(rank);
 }
