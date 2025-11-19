@@ -47,6 +47,7 @@ if [ ! -f "CMakeCache.txt" ]; then
     -DCMAKE_BUILD_TYPE=DEBUG \
     -DMLIR_ENABLE_BINDINGS_PYTHON="${PYBIND:=OFF}" \
     -DSCALEHLS_ENABLE_BINDINGS_PYTHON="${PYBIND:=OFF}" \
+    -DPython3_EXECUTABLE=$(which python3) \
     -DLLVM_PARALLEL_LINK_JOBS="${JOBS:=}" \
     -DLLVM_USE_LINKER=lld \
     -DCMAKE_C_COMPILER=clang \
