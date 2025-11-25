@@ -13,6 +13,14 @@ using namespace mlir;
 using namespace scalehls;
 using namespace hls;
 
+
+/// Op fuse strategies:
+/// 1. Transposes are to be fused by their matmul users
+/// 2. Reshape-type ops are to be fused by their reduction-type users(matmul, conv, reduce_sum, reduce_max, etc.)
+/// 3. Elementwise-type and broadcast-type Ops are to be fused by their users (broadcast-type ops can always be treated as elementwise ones)
+/// Finally, be greedy and aggressive!
+
+
 namespace {
 /// This pattern will outline ops with the specified type.
 template <typename InterfaceType>
@@ -121,35 +129,17 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
     /// then generate one copy for each and replace the corresponding use of the result
     for (auto& use : llvm::make_early_inc_range(op->getUses())) {
       if (auto task = dyn_cast<TaskOp>(use.getOwner()->getParentOp())) {
-        // use.getOwner()->getParentOp()->dump();
-        // llvm::dbgs() << "\n\n\n";
         noTaskUsers = false;
         builder.setInsertionPoint(op);
-        // if (idx++ != 0) {
-          auto clone = cast<OpType>(builder.clone(*op));
+        auto clone = cast<OpType>(builder.clone(*op));
         
-          auto cloneResult = clone->getResult(0);
+        auto cloneResult = clone->getResult(0);
 
-          use.set(cloneResult);
+        use.set(cloneResult);
 
-          fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
-        // }
+        fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
       }
     }
-
-    // // Find all task users.
-    // SmallVector<TaskOp, 4> taskUsers;
-    // for (auto user : op->getUsers())
-    //   if (auto task = dyn_cast<TaskOp>(user->getParentOp()))
-    //     taskUsers.push_back(task);
-    // if (taskUsers.empty())
-    //   return failure();
-
-    // // We always select the dominating task as the target to fuse.
-    // // FIXME: Check there's no intervening ops in between.
-    // llvm::sort(taskUsers, [&](auto a, auto b) { return DT.dominates(a, b); });
-    // fuseOpsIntoTask({op, taskUsers.front()}, rewriter, /*insertToLastOp=*/true);
-    // return success();
 
     if (noTaskUsers) return failure();
     rewriter.eraseOp(op);
@@ -289,10 +279,3 @@ std::unique_ptr<Pass> scalehls::createCreateDataflowFromLinalgPass() {
   return std::make_unique<CreateDataflowFromLinalg>();
 }
 
-
-
-/// OP fuse strategies:
-/// 1. Transposes are to be fused by their matmul users
-/// 2. ReshapeType Ops are to be fused by their ReductionType parent Ops(matmul, conv, reduce_sum, reduce_max, etc.)
-/// 3. ElementwiseType and BroadcastType Ops are to be fused by their users
-/// Finally, be greedy!
