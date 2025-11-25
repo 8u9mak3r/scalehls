@@ -86,6 +86,7 @@ struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
 
     /// By default, we assume the terminating operation of the whole workload will be generics
     /// besides matmuls, convs and reductions
+    /// TODO: What about reshape-type operations
     if (op->hasOneUse()) {
       for (auto user : op->getUsers()) {
         if (isa<DispatchOp>(user->getParentOp())) {
