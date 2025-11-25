@@ -128,6 +128,10 @@ struct ScaleFlowPyTorchPipelineOptions
       *this, "fake-quantize", llvm::cl::init(false),
       llvm::cl::desc("Trigger the fake quantization (just for testing use)")};
 
+  Option<unsigned> startPoint{
+      *this, "start-point", llvm::cl::init(0),
+      llvm::cl::desc("Start the pipeline at the given debug point")};
+
   Option<unsigned> debugPoint{
       *this, "debug-point", llvm::cl::init(0),
       llvm::cl::desc("Stop the pipeline at the given debug point")};
@@ -139,6 +143,69 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
       "scaleflow-pytorch-pipeline",
       "Compile TOSA (from Torch-MLIR) to HLS C++ with ScaleFlow",
       [](OpPassManager &pm, const ScaleFlowPyTorchPipelineOptions &opts) {
+        switch (opts.startPoint)
+        {
+          case 1:
+            goto entry_1;
+            break;
+
+          case 2:
+            goto entry_2;
+            break;
+
+          case 3:
+            goto entry_3;
+            break;
+
+          case 4:
+            goto entry_4;
+            break;
+          
+          case 5:
+            goto entry_5;
+            break;
+          
+          case 6:
+            goto entry_6;
+            break;
+
+          case 7:
+            goto entry_7;
+            break;
+
+          case 8:
+            goto entry_8;
+            break;
+
+          case 9:
+            goto entry_9;
+            break;
+
+          case 10:
+            goto entry_10;
+            break;
+
+          case 11:
+            goto entry_11;
+            break;
+
+          case 12:
+            goto entry_12;
+            break;
+
+          case 13:
+            goto entry_13;
+            break;
+
+          case 14:
+            goto entry_14;
+            break;
+        
+          default:
+            break;
+        }
+
+entry_1:
         if (opts.tosaInput) {
           // TOSA optimization.
           pm.addPass(scalehls::createTosaSimplifyGraphPass());
@@ -159,15 +226,16 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 1)
           return;
 
+entry_2:         
         // Linalg optimization.
         pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
         pm.addPass(scalehls::createCreateDataflowFromLinalgPass());
         pm.addPass(mlir::createConvertTensorToLinalgPass());
         pm.addPass(mlir::createCanonicalizerPass());
-
         if (opts.debugPoint == 2)
           return;
-
+          
+entry_3:
         // Bufferization.
         pm.addPass(mlir::createLinalgBufferizePass());
         pm.addPass(arith::createArithBufferizePass());
@@ -180,6 +248,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 3)
           return;
 
+entry_4:
         // Linalg to Affine conversion.
         pm.addPass(mlir::createLinalgGeneralizationPass());
         pm.addPass(scalehls::createSimplifyCopyPass());
@@ -191,6 +260,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 4)
           return;
 
+entry_5:
         // Affine loop fusion.
         pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
         pm.addPass(scalehls::createAffineLoopFusionPass(opts.fusionTolerance));
@@ -205,6 +275,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 5)
           return;
 
+entry_6:
         // Place dataflow buffers.
         pm.addPass(
             scalehls::createPlaceDataflowBufferPass(opts.placeExternalBuffer));
@@ -217,6 +288,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 6)
           return;
 
+entry_7:
         // Affine loop tiling.
         pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
         pm.addPass(bufferization::createBufferLoopHoistingPass());
@@ -229,6 +301,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 7)
           return;
 
+entry_8:
         // Local buffer allocation.
         scalehls::addCreateSubviewPasses(pm);
         pm.addPass(scalehls::createCreateLocalBufferPass());
@@ -240,6 +313,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 8)
           return;
 
+entry_9:
         // Affine loop dataflowing.
         pm.addPass(scalehls::createCollapseMemrefUnitDimsPass());
         pm.addPass(scalehls::createAffineStoreForwardPass());
@@ -250,6 +324,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 9)
           return;
 
+entry_10:
         // Lower and optimize dataflow.
         pm.addPass(scalehls::createLowerDataflowPass());
         pm.addPass(scalehls::createEliminateMultiProducerPass());
@@ -264,6 +339,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 10)
           return;
 
+entry_11:
         // Parallelize dataflow.
         pm.addPass(scalehls::createParallelizeDataflowNodePass(
             opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true,
@@ -275,6 +351,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 11)
           return;
 
+entry_12:
         // Memory optimization.
         pm.addPass(scalehls::createSimplifyAffineIfPass());
         pm.addPass(scalehls::createAffineStoreForwardPass());
@@ -284,6 +361,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 12)
           return;
 
+entry_13:
         // Convert dataflow to func.
         pm.addPass(scalehls::createCreateTokenStreamPass());
         pm.addPass(scalehls::createConvertDataflowToFuncPass());
@@ -292,6 +370,7 @@ void scalehls::registerScaleFlowPyTorchPipeline() {
         if (opts.debugPoint == 13)
           return;
 
+entry_14:
         // Directive-level optimization.
         if (opts.axiInterface)
           pm.addPass(scalehls::createCreateAxiInterfacePass(opts.hlsTopFunc));

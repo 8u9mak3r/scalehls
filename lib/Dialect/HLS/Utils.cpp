@@ -73,11 +73,14 @@ TaskOp scalehls::fuseOpsIntoTask(ArrayRef<Operation *> ops,
   // Collect output values. This is not sufficient and may lead to empty-used
   // outputs, which will be removed during canonicalization.
   llvm::SetVector<Value> outputValues;
-  for (auto op : ops)
-    for (auto result : op->getResults())
+  for (auto op : ops) {
+    for (auto result : op->getResults()) {
       if (llvm::any_of(result.getUsers(),
-                       [&](Operation *user) { return !opsSet.count(user); }))
+                       [&](Operation *user) { return !opsSet.count(user); })) {
         outputValues.insert(result);
+      }
+    }
+  }
 
   // Create new graph task with all inputs and outputs.
   auto loc = rewriter.getUnknownLoc();
@@ -97,10 +100,12 @@ TaskOp scalehls::fuseOpsIntoTask(ArrayRef<Operation *> ops,
 
   // Replace external output uses with the task results.
   unsigned idx = 0;
-  for (auto output : outputValues)
+  for (auto output : outputValues) {
     output.replaceUsesWithIf(task.getResult(idx++), [&](OpOperand &use) {
+      // Ops lie within current task are not to be counted in
       return !task->isProperAncestor(use.getOwner());
     });
+  }
 
   // Inline all sub-tasks.
   for (auto subTask : llvm::make_early_inc_range(task.getOps<TaskOp>())) {

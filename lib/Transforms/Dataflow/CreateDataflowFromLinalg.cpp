@@ -39,8 +39,63 @@ struct OutlineRootOp : public OpRewritePattern<OpType> {
                                 PatternRewriter &rewriter) const override {
     if (op->template getParentOfType<TaskOp>())
       return failure();
+
     fuseOpsIntoTask({op}, rewriter);
     return success();
+  }
+};
+} // namespace
+
+namespace {
+/// This pattern will outline ops with the specified type.
+struct OutlineRootReductionTypeGenericOp : public OpRewritePattern<linalg::GenericOp> {
+  using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::GenericOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op->template getParentOfType<TaskOp>())
+      return failure();
+
+    auto iteratorTypes = op.getIteratorTypes();
+    bool reductionType = false;
+    for (auto it : iteratorTypes) {
+      auto s = cast<StringAttr>(it);
+      if (s.getValue() == "reduction") {
+        reductionType = true;
+      }
+    }
+
+    if (!reductionType) return failure();
+
+    fuseOpsIntoTask({op}, rewriter);
+    return success();
+  }
+};
+} // namespace
+
+namespace {
+/// This pattern will outline ops with the specified type.
+// template <typename OpType>
+struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
+  using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::GenericOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op->template getParentOfType<TaskOp>())
+      return failure();
+
+    /// By default, we assume the terminating operation of the whole workload will be generics
+    /// besides matmuls, convs and reductions
+    if (op->hasOneUse()) {
+      for (auto user : op->getUsers()) {
+        if (isa<DispatchOp>(user->getParentOp())) {
+          fuseOpsIntoTask({op}, rewriter);
+          return success();
+        }
+      }
+    }
+
+    return failure();
   }
 };
 } // namespace
@@ -57,18 +112,46 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
       return failure();
     auto DT = DominanceInfo();
 
-    // Find all task users.
-    SmallVector<TaskOp, 4> taskUsers;
-    for (auto user : op->getUsers())
-      if (auto task = dyn_cast<TaskOp>(user->getParentOp()))
-        taskUsers.push_back(task);
-    if (taskUsers.empty())
-      return failure();
+    auto builder = OpBuilder(rewriter.getContext());
+    bool noTaskUsers = true;
+    unsigned int idx = 0;
+                      
+    /// if the result of the operation to be forward fused has multiple consumers
+    /// then generate one copy for each and replace the corresponding use of the result
+    for (auto& use : llvm::make_early_inc_range(op->getUses())) {
+      if (auto task = dyn_cast<TaskOp>(use.getOwner()->getParentOp())) {
+        // use.getOwner()->getParentOp()->dump();
+        // llvm::dbgs() << "\n\n\n";
+        noTaskUsers = false;
+        builder.setInsertionPoint(op);
+        // if (idx++ != 0) {
+          auto clone = cast<OpType>(builder.clone(*op));
+        
+          auto cloneResult = clone->getResult(0);
 
-    // We always select the dominating task as the target to fuse.
-    // FIXME: Check there's no intervening ops in between.
-    llvm::sort(taskUsers, [&](auto a, auto b) { return DT.dominates(a, b); });
-    fuseOpsIntoTask({op, taskUsers.front()}, rewriter, /*insertToLastOp=*/true);
+          use.set(cloneResult);
+
+          fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
+        // }
+      }
+    }
+
+    // // Find all task users.
+    // SmallVector<TaskOp, 4> taskUsers;
+    // for (auto user : op->getUsers())
+    //   if (auto task = dyn_cast<TaskOp>(user->getParentOp()))
+    //     taskUsers.push_back(task);
+    // if (taskUsers.empty())
+    //   return failure();
+
+    // // We always select the dominating task as the target to fuse.
+    // // FIXME: Check there's no intervening ops in between.
+    // llvm::sort(taskUsers, [&](auto a, auto b) { return DT.dominates(a, b); });
+    // fuseOpsIntoTask({op, taskUsers.front()}, rewriter, /*insertToLastOp=*/true);
+    // return success();
+
+    if (noTaskUsers) return failure();
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -155,13 +238,14 @@ struct BackwardFuseGenericOp : public OpRewritePattern<linalg::GenericOp> {
 static void
 populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
   auto context = patterns.getContext();
-  // patterns.add<BackwardFuseGenericOp>(context);
-  patterns.add<ForwardFuseGenericOp>(context);
+
+  /// Normally, generics are all elementwise-type ones and broadcast-type ones excluding reduction-type ones, which are all fusable
+  patterns.add<ForwardFuseOp<linalg::GenericOp>>(context);
   patterns.add<ForwardFuseOp<linalg::FillOp>>(context);
   patterns.add<ForwardFuseOp<tensor::EmptyOp>>(context);
   patterns.add<ForwardFuseOp<tensor::PadOp>>(context);
-  patterns.add<ForwardFuseOp<tensor::CollapseShapeOp>>(context);
   patterns.add<ForwardFuseOp<tensor::ExpandShapeOp>>(context);
+  patterns.add<ForwardFuseOp<tensor::CollapseShapeOp>>(context);
   patterns.add<ForwardFuseOp<tensor::InsertSliceOp>>(context);
   patterns.add<ForwardFuseOp<tensor::ExtractSliceOp>>(context);
 }
@@ -191,13 +275,11 @@ struct CreateDataflowFromLinalg
     mlir::RewritePatternSet patterns(context);
     patterns.add<OutlineRootInterface<linalg::ConvolutionOpInterface>>(context);
     patterns.add<OutlineRootInterface<linalg::ContractionOpInterface>>(context);
+    patterns.add<OutlineRootReductionTypeGenericOp>(context);
+    patterns.add<OutlineRootFinalOp>(context);
     populateForwardBackwardFusePatterns(patterns);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
-
     patterns.clear();
-    patterns.add<OutlineRootOp<linalg::GenericOp>>(context);
-    populateForwardBackwardFusePatterns(patterns);
-    (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
   }
 };
 } // namespace
@@ -205,3 +287,11 @@ struct CreateDataflowFromLinalg
 std::unique_ptr<Pass> scalehls::createCreateDataflowFromLinalgPass() {
   return std::make_unique<CreateDataflowFromLinalg>();
 }
+
+
+
+/// OP fuse strategies:
+/// 1. Transposes are to be fused by their matmul users
+/// 2. ReshapeType Ops are to be fused by their ReductionType parent Ops(matmul, conv, reduce_sum, reduce_max, etc.)
+/// 3. ElementwiseType and BroadcastType Ops are to be fused by their users
+/// Finally, be greedy!
