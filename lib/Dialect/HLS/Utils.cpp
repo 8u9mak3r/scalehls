@@ -319,6 +319,38 @@ bool scalehls::isElementwiseGenericOp(linalg::GenericOp op) {
   return true;
 }
 
+bool scalehls::isReductionTypeGenericOp(linalg::GenericOp op) {
+  auto iteratorTypes = op.getIteratorTypes();
+  bool reductionType = false;
+  for (auto it : iteratorTypes) {
+    auto s = cast<StringAttr>(it);
+    if (s.getValue() == "reduction") {
+      reductionType = true;
+    }
+  }
+
+  return reductionType;
+}
+
+bool scalehls::isReshaped(llvm::ArrayRef<int64_t>&s0, llvm::ArrayRef<int64_t>&s1) {
+  int64_t x0 = 1;
+  int64_t x1 = 1;
+  
+  if (s0.size() < s1.size()) {
+    for (size_t i = 0; i + s0.size() <= s1.size(); i += 1) {
+      if (s1.slice(i, s0.size()) == s0) return true;
+    }
+  } else if (s0.size() > s1.size()) {
+    for (size_t i = 0; i + s1.size() <= s0.size(); i += 1) {
+      if (s0.slice(i, s1.size()) == s1) return true;
+    }
+  } else {
+    return s0 == s1;
+  }
+
+  return false;
+}
+
 //===----------------------------------------------------------------------===//
 // Memory and loop analysis utils
 //===----------------------------------------------------------------------===//

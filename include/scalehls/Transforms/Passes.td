@@ -178,6 +178,12 @@ def StreamDataflowTask : Pass<"scalehls-stream-dataflow-task", "func::FuncOp"> {
   let constructor = "mlir::scalehls::createStreamDataflowTaskPass()";
 }
 
+def ReshapeUpliftBetweenTasks :
+      Pass<"scalehls-reshape-uplift-between-tasks", "func::FuncOp"> {
+  let summary = "Uplift reshape-type operations between dataflow tasks";
+  let constructor = "mlir::scalehls::createReshapeUpliftBetweenTasksPass()";
+}
+
 //===----------------------------------------------------------------------===//
 // Tensor-related Passes
 //===----------------------------------------------------------------------===//

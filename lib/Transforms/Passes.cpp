@@ -230,8 +230,9 @@ entry_2:
         // Linalg optimization.
         pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
         pm.addPass(scalehls::createCreateDataflowFromLinalgPass());
-        pm.addPass(mlir::createConvertTensorToLinalgPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(scalehls::createReshapeUpliftBetweenTasksPass());
+        // pm.addPass(mlir::createConvertTensorToLinalgPass());
+        // pm.addPass(mlir::createCanonicalizerPass());
         if (opts.debugPoint == 2)
           return;
           

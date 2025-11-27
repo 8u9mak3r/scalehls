@@ -4,6 +4,7 @@ add_mlir_library(MLIRScaleHLSTransforms
   Dataflow/ConvertDataflowToFunc.cpp
   Dataflow/CreateDataflowFromAffine.cpp
   Dataflow/CreateDataflowFromLinalg.cpp
+  Dataflow/CreateReshapeUpliftBetweenTasks.cpp
   Dataflow/CreateDataflowFromTosa.cpp
   Dataflow/CreateTokenStream.cpp
   Dataflow/EliminateMultiConsumer.cpp

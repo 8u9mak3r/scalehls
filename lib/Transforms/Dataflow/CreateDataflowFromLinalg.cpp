@@ -64,16 +64,7 @@ struct OutlineRootReductionTypeGenericOp : public OpRewritePattern<linalg::Gener
     if (op->template getParentOfType<TaskOp>())
       return failure();
 
-    auto iteratorTypes = op.getIteratorTypes();
-    bool reductionType = false;
-    for (auto it : iteratorTypes) {
-      auto s = cast<StringAttr>(it);
-      if (s.getValue() == "reduction") {
-        reductionType = true;
-      }
-    }
-
-    if (!reductionType) return failure();
+    if (!isReductionTypeGenericOp(op)) return failure();
 
     fuseOpsIntoTask({op}, rewriter);
     return success();
@@ -123,7 +114,6 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
 
     auto builder = OpBuilder(rewriter.getContext());
     bool noTaskUsers = true;
-    unsigned int idx = 0;
                       
     /// if the result of the operation to be forward fused has multiple consumers
     /// then generate one copy for each and replace the corresponding use of the result

@@ -74,6 +74,8 @@ void populateBufferConversionPatterns(RewritePatternSet &patterns);
 //===----------------------------------------------------------------------===//
 
 bool isElementwiseGenericOp(linalg::GenericOp op);
+bool isReductionTypeGenericOp(linalg::GenericOp op);
+bool isReshaped(llvm::ArrayRef<int64_t>&, llvm::ArrayRef<int64_t>&);
 
 //===----------------------------------------------------------------------===//
 // Memory and loop analysis utils

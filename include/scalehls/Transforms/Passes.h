@@ -50,6 +50,7 @@ std::unique_ptr<Pass>
 createConvertDataflowToFuncPass(bool splitExternalAccess = true);
 std::unique_ptr<Pass> createCreateDataflowFromTosaPass();
 std::unique_ptr<Pass> createCreateDataflowFromLinalgPass();
+std::unique_ptr<Pass> createReshapeUpliftBetweenTasksPass();
 std::unique_ptr<Pass> createCreateDataflowFromAffinePass();
 std::unique_ptr<Pass> createCreateTokenStreamPass();
 std::unique_ptr<Pass> createEliminateMultiConsumerPass();
