@@ -76,7 +76,7 @@ TaskOp scalehls::fuseOpsIntoTask(ArrayRef<Operation *> ops,
   for (auto op : ops) {
     for (auto result : op->getResults()) {
       if (llvm::any_of(result.getUsers(),
-                       [&](Operation *user) { return !opsSet.count(user); })) {
+                       [&](Operation *user) { return !(opsSet.count(user) || opsSet.count(user->getParentOp())); })) {
         outputValues.insert(result);
       }
     }
@@ -319,37 +319,69 @@ bool scalehls::isElementwiseGenericOp(linalg::GenericOp op) {
   return true;
 }
 
-bool scalehls::isReductionTypeGenericOp(linalg::GenericOp op) {
-  auto iteratorTypes = op.getIteratorTypes();
+bool scalehls::isReductionTypeGenericOp(mlir::Operation* op) {
   bool reductionType = false;
-  for (auto it : iteratorTypes) {
-    auto s = cast<StringAttr>(it);
-    if (s.getValue() == "reduction") {
-      reductionType = true;
+  if (auto castOp = dyn_cast<linalg::GenericOp>(op)) {
+    auto iteratorTypes = castOp.getIteratorTypes();
+  
+    for (auto it : iteratorTypes) {
+      auto s = cast<StringAttr>(it);
+      if (s.getValue() == "reduction") {
+        reductionType = true;
+      }
     }
   }
-
+  
   return reductionType;
 }
 
-bool scalehls::isReshaped(llvm::ArrayRef<int64_t>&s0, llvm::ArrayRef<int64_t>&s1) {
+bool scalehls::isReshaped(mlir::ShapedType& st0, mlir::ShapedType& st1) {
+  auto s0 = st0.getShape();
+  auto s1 = st1.getShape();
+
   int64_t x0 = 1;
   int64_t x1 = 1;
+  for (int64_t dim : s0) x0 *= dim;
+  for (int64_t dim : s1) x1 *= dim;
   
-  if (s0.size() < s1.size()) {
-    for (size_t i = 0; i + s0.size() <= s1.size(); i += 1) {
-      if (s1.slice(i, s0.size()) == s0) return true;
+  // irrelevant couple of shapes
+  if (x0 != x1) return false;
+  
+  size_t i = 0;
+  for (int64_t dim : s0) {
+    if (dim == 1) continue;
+
+    for (; i < s1.size(); ++i) {
+      if (s1[i] == dim) break;
     }
-  } else if (s0.size() > s1.size()) {
-    for (size_t i = 0; i + s1.size() <= s0.size(); i += 1) {
-      if (s0.slice(i, s1.size()) == s1) return true;
-    }
-  } else {
-    return s0 == s1;
+    
+    if (i == s1.size()) return true;
+    else ++i;
   }
 
   return false;
 }
+
+
+llvm::SmallVector<int64_t> scalehls::computePermutation(mlir::ShapedType src, mlir::ShapedType dst) {
+  auto srcShape = src.getShape();
+  auto dstShape = dst.getShape();
+  if (src.getRank() != dst.getRank()) llvm::report_fatal_error("Shapes are not a permutation!");
+
+  int rank = src.getRank();
+  llvm::SmallVector<int64_t> perm(rank);
+
+  for (int i = 0; i < rank; ++i) {
+    // 在 src 中找到 dst[i] 对应的维度位置
+    auto it = llvm::find(srcShape, dstShape[i]);
+    if (it == srcShape.end())
+      llvm::report_fatal_error("Shapes are not a permutation!");
+
+    perm[i] = std::distance(srcShape.begin(), it);
+  }
+  return perm;
+}
+
 
 //===----------------------------------------------------------------------===//
 // Memory and loop analysis utils

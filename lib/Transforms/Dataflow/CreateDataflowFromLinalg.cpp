@@ -31,6 +31,8 @@ struct OutlineRootInterface : public OpInterfaceRewritePattern<InterfaceType> {
                                 PatternRewriter &rewriter) const override {
     if (op->template getParentOfType<TaskOp>())
       return failure();
+
+    op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
     fuseOpsIntoTask({op}, rewriter);
     return success();
   }
@@ -48,6 +50,7 @@ struct OutlineRootOp : public OpRewritePattern<OpType> {
     if (op->template getParentOfType<TaskOp>())
       return failure();
 
+    op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
     fuseOpsIntoTask({op}, rewriter);
     return success();
   }
@@ -66,6 +69,7 @@ struct OutlineRootReductionTypeGenericOp : public OpRewritePattern<linalg::Gener
 
     if (!isReductionTypeGenericOp(op)) return failure();
 
+    op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
     fuseOpsIntoTask({op}, rewriter);
     return success();
   }
@@ -83,12 +87,12 @@ struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
     if (op->template getParentOfType<TaskOp>())
       return failure();
 
-    /// By default, we assume the terminating operation of the whole workload will be generics
-    /// besides matmuls, convs and reductions
+    /// By default, we assume the terminating operation of the whole workload will be generics besides matmuls, convs and reductions
     /// TODO: What about reshape-type operations
     if (op->hasOneUse()) {
       for (auto user : op->getUsers()) {
         if (isa<DispatchOp>(user->getParentOp())) {
+          op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
           fuseOpsIntoTask({op}, rewriter);
           return success();
         }
@@ -132,7 +136,7 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
     }
 
     if (noTaskUsers) return failure();
-    rewriter.eraseOp(op);
+    if (op->use_empty()) rewriter.eraseOp(op);
     return success();
   }
 };
@@ -222,6 +226,7 @@ populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
 
   /// Normally, generics are all elementwise-type ones and broadcast-type ones excluding reduction-type ones, which are all fusable
   patterns.add<ForwardFuseOp<linalg::GenericOp>>(context);
+  patterns.add<ForwardFuseOp<linalg::TransposeOp>>(context);
   patterns.add<ForwardFuseOp<linalg::FillOp>>(context);
   patterns.add<ForwardFuseOp<tensor::EmptyOp>>(context);
   patterns.add<ForwardFuseOp<tensor::PadOp>>(context);
@@ -229,6 +234,8 @@ populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
   patterns.add<ForwardFuseOp<tensor::CollapseShapeOp>>(context);
   patterns.add<ForwardFuseOp<tensor::InsertSliceOp>>(context);
   patterns.add<ForwardFuseOp<tensor::ExtractSliceOp>>(context);
+  patterns.add<ForwardFuseOp<math::ExpOp>>(context);
+  patterns.add<ForwardFuseOp<math::ErfOp>>(context);
 }
 
 namespace {
@@ -257,6 +264,7 @@ struct CreateDataflowFromLinalg
     patterns.add<OutlineRootInterface<linalg::ConvolutionOpInterface>>(context);
     patterns.add<OutlineRootInterface<linalg::ContractionOpInterface>>(context);
     patterns.add<OutlineRootReductionTypeGenericOp>(context);
+    patterns.add<OutlineRootOp<linalg::ReduceOp>>(context);
     patterns.add<OutlineRootFinalOp>(context);
     populateForwardBackwardFusePatterns(patterns);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
