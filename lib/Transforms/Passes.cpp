@@ -233,6 +233,7 @@ entry_2:
         pm.addPass(scalehls::createUpliftReshapesBetweenTasksPass());
         pm.addPass(mlir::createConvertTensorToLinalgPass());
         pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(scalehls::createGrandFusionPass());
         if (opts.debugPoint == 2)
           return;
           

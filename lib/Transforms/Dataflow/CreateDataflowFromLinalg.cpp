@@ -143,35 +143,6 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
 } // namespace
 
 namespace {
-/// This pattern will backward fuse ops with the specified type.
-template <typename OpType>
-struct BackwardFuseOp : public OpRewritePattern<OpType> {
-  using OpRewritePattern<OpType>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(OpType op,
-                                PatternRewriter &rewriter) const override {
-    if (op->template getParentOfType<TaskOp>())
-      return failure();
-    auto DT = DominanceInfo();
-
-    // Find all task defining ops.
-    SmallVector<TaskOp, 4> taskDefOps;
-    for (auto operand : op->getOperands())
-      if (auto task = operand.template getDefiningOp<TaskOp>())
-        taskDefOps.push_back(task);
-    if (taskDefOps.empty())
-      return failure();
-
-    // We always select the dominated task as the target to fuse.
-    // FIXME: Check there's no intervening ops in between.
-    llvm::sort(taskDefOps, [&](auto a, auto b) { return DT.dominates(a, b); });
-    fuseOpsIntoTask({taskDefOps.back(), op}, rewriter, /*insertToLastOp=*/true);
-    return success();
-  }
-};
-} // namespace
-
-namespace {
 /// Forward fuse generic tensor copies.
 struct ForwardFuseGenericOp : public OpRewritePattern<linalg::GenericOp> {
   using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
@@ -197,22 +168,6 @@ struct ForwardFuseGenericOp : public OpRewritePattern<linalg::GenericOp> {
 
     if (matched) {
       auto pattern = ForwardFuseOp<linalg::GenericOp>(getContext());
-      return pattern.matchAndRewrite(op, rewriter);
-    }
-    return failure();
-  }
-};
-} // namespace
-
-namespace {
-/// Backward fuse generic tensor elementwise ops.
-struct BackwardFuseGenericOp : public OpRewritePattern<linalg::GenericOp> {
-  using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::GenericOp op,
-                                PatternRewriter &rewriter) const override {
-    if (isElementwiseGenericOp(op)) {
-      auto pattern = BackwardFuseOp<linalg::GenericOp>(getContext());
       return pattern.matchAndRewrite(op, rewriter);
     }
     return failure();

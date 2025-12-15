@@ -184,6 +184,12 @@ def UpliftReshapesBetweenTasks :
   let constructor = "mlir::scalehls::createUpliftReshapesBetweenTasksPass()";
 }
 
+def GrandFusion :
+      Pass<"scalehls-grand-fusion", "func::FuncOp"> {
+  let summary = "Fuse all trivial ops within each task into one linalg.generic op";
+  let constructor = "mlir::scalehls::createGrandFusionPass()";
+}
+
 //===----------------------------------------------------------------------===//
 // Tensor-related Passes
 //===----------------------------------------------------------------------===//
