@@ -74,9 +74,9 @@ void populateBufferConversionPatterns(RewritePatternSet &patterns);
 //===----------------------------------------------------------------------===//
 
 bool isElementwiseGenericOp(linalg::GenericOp op);
-bool isReductionTypeGenericOp(mlir::Operation* op);
-bool isReshaped(mlir::ShapedType& st0, mlir::ShapedType& st1);
-llvm::SmallVector<int64_t> computePermutation(mlir::ShapedType src, mlir::ShapedType dst);
+bool isReductionTypeGenericOp(Operation* op);
+bool isReshaped(RankedTensorType& st0, RankedTensorType& st1);
+Optional<SmallVector<int64_t>> computePermutation(RankedTensorType src, RankedTensorType dst);
 
 //===----------------------------------------------------------------------===//
 // Memory and loop analysis utils

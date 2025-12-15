@@ -23,12 +23,12 @@ enum class ReshapeKind {ExpandShape, Transpose, CollapseShape};
 namespace {
 // Target shaped-type with redundant dimensions('1's) and element type in uniform with the src.
 // Thus, all the reshape operations themselves result in no redundant dims, regardless of those already in exist in old shapes
-mlir::ShapedType getDstShapedTypeUniformedWithSrc(mlir::ShapedType& srcShapedType, mlir::ShapedType& dstShapedType, ReshapeKind mode) {
-  // llvm::dbgs() << "Calling getDstShapedTypeUniformedWithSrc\n";
+RankedTensorType getDstTypeUniformedWithSrc(RankedTensorType& srcType, RankedTensorType& dstType, ReshapeKind mode) {
+  // llvm::dbgs() << "Calling getDstTypeUniformedWithSrc\n";
 
-  auto srcShape = srcShapedType.getShape();
-  auto dstShape = dstShapedType.getShape();
-  llvm::SmallVector<int64_t> dstShapeUniformedWithSrc;
+  auto srcShape = srcType.getShape();
+  auto dstShape = dstType.getShape();
+  SmallVector<int64_t> dstShapeUniformedWithSrc;
 
   size_t i = 0;
   size_t j = 0;
@@ -85,29 +85,29 @@ mlir::ShapedType getDstShapedTypeUniformedWithSrc(mlir::ShapedType& srcShapedTyp
   }
     
 
-  auto dstShapedTypeUniformedWithSrc = mlir::RankedTensorType::get(
+  auto dstTypeUniformedWithSrc = RankedTensorType::get(
     dstShapeUniformedWithSrc,
-    srcShapedType.getElementType()
+    srcType.getElementType()
   );
 
 
-  return dstShapedTypeUniformedWithSrc.cast<mlir::ShapedType>();
+  return dstTypeUniformedWithSrc;
 }
 } // namespace
 
 namespace {
-mlir::AffineExpr getNewAffineExpr(mlir::AffineExpr expr, 
-                                  llvm::ArrayRef<int64_t>& resultShape,
-                                  llvm::SmallVector<mlir::ReassociationIndices, 4U>& reassociationIndices,
-                                  llvm::SmallVector<int64_t, 4U>& staticLoopRanges,
-                                  mlir::MLIRContext* ctx,
-                                  ReshapeKind mode) {
+AffineExpr getNewAffineExpr(AffineExpr expr, 
+                            ArrayRef<int64_t>& resultShape,
+                            SmallVector<ReassociationIndices, 4U>& reassociationIndices,
+                            SmallVector<int64_t, 4U>& staticLoopRanges,
+                            MLIRContext* ctx,
+                            ReshapeKind mode) {
 
-  if (expr.isa<mlir::AffineConstantExpr>()) return expr;
+  if (expr.isa<AffineConstantExpr>()) return expr;
 
-  mlir::AffineExpr newExpr = mlir::getAffineConstantExpr(0, ctx);
+  AffineExpr newExpr = mlir::getAffineConstantExpr(0, ctx);
 
-  if (expr.isa<mlir::AffineDimExpr>()) {
+  if (expr.isa<AffineDimExpr>()) {
     auto castExpr = expr.cast<AffineDimExpr>();
     auto loopRange = staticLoopRanges[castExpr.getPosition()];
 
@@ -144,7 +144,7 @@ mlir::AffineExpr getNewAffineExpr(mlir::AffineExpr expr,
   }
 }
     
-  if (expr.isa<mlir::AffineBinaryOpExpr>()) {
+  if (expr.isa<AffineBinaryOpExpr>()) {
     auto castExpr = expr.cast<AffineBinaryOpExpr>();
     auto lhs = castExpr.getLHS();
     auto rhs = castExpr.getRHS();
@@ -180,13 +180,13 @@ mlir::AffineExpr getNewAffineExpr(mlir::AffineExpr expr,
 
 
 namespace {
-void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path, 
-                              mlir::Operation* upliftedReshapeOp, 
-                              PatternRewriter& rewriter,
-                              ReshapeKind mode) {
+void cloneNewUsersFromReshapeOps(SmallVector<Operation*, 128>& path, 
+                                  Operation* upliftedReshapeOp, 
+                                  PatternRewriter& rewriter,
+                                  ReshapeKind mode) {
   // llvm::dbgs() << "Calling cloneNewUsersFromReshapeOps\n";
 
-  llvm::SmallVector<mlir::ReassociationIndices, 4U> reassociationIndices;
+  SmallVector<ReassociationIndices, 4U> reassociationIndices;
   switch (mode) {
     case ReshapeKind::ExpandShape:
       reassociationIndices = dyn_cast<tensor::ExpandShapeOp>(upliftedReshapeOp).getReassociationIndices();
@@ -195,7 +195,7 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
     case ReshapeKind::Transpose: {
       int64_t rank = dyn_cast<linalg::TransposeOp>(upliftedReshapeOp).getPermutation().size();
       for (int64_t i = 0; i < rank; i += 1) {
-        mlir::ReassociationIndices _ = {i};
+        ReassociationIndices _ = {i};
         reassociationIndices.push_back(_);
       }
       break;
@@ -233,8 +233,8 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
       }
 
       if (clonedOp->getResult(0).getType() != opToBeRebuiltAndErased->getResult(0).getType()) {
-        auto st0 = dyn_cast<mlir::ShapedType>(clonedOp->getResult(0).getType());
-        auto st1 = dyn_cast<mlir::ShapedType>(opToBeRebuiltAndErased->getResult(0).getType());
+        auto st0 = clonedOp->getResult(0).getType().cast<RankedTensorType>();
+        auto st1 = opToBeRebuiltAndErased->getResult(0).getType().cast<RankedTensorType>();
         assert(st0.getShape().size() != st1.getShape().size() && !isReshaped(st0, st1));
 
         rewriter.setInsertionPoint(opToBeRebuiltAndErased);
@@ -267,12 +267,12 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
     if (isa<linalg::GenericOp>(opToBeRebuiltAndErased)) {
       auto oldGenericOp = dyn_cast<linalg::GenericOp>(opToBeRebuiltAndErased);
       auto loc = oldGenericOp.getLoc();  // location
-      auto resultType = mlir::RankedTensorType::get(
-        dyn_cast<mlir::ShapedType>(clonedOp->getResult(0).getType()).getShape(),
-        dyn_cast<mlir::ShapedType>(oldGenericOp->getResult(0).getType()).getElementType()
+      auto resultType = RankedTensorType::get(
+        clonedOp->getResult(0).getType().cast<RankedTensorType>().getShape(),
+        oldGenericOp->getResult(0).getType().cast<RankedTensorType>().getElementType()
       );  // result type
             
-      llvm::SetVector<Value> inputs, outputs;
+      SetVector<Value> inputs, outputs;
       // inputs
       size_t inputIdx = SIZE_MAX;
       for (auto input : oldGenericOp.getInputs()) {
@@ -291,9 +291,9 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
       outputs.insert(emptyOp.getResult());
 
       // indexing maps
-      llvm::SmallVector<mlir::AffineMap, 8> affineMaps;
-      llvm::SmallVector<mlir::AffineExpr, 8> affineExprs;
-      mlir::MLIRContext* ctx = rewriter.getContext();
+      SmallVector<AffineMap, 8> affineMaps;
+      SmallVector<AffineExpr, 8> affineExprs;
+      MLIRContext* ctx = rewriter.getContext();
 
       auto oldIndexingMaps = oldGenericOp.getIndexingMapsArray();
       auto resultShape = resultType.getShape();
@@ -305,7 +305,7 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
 
         if (indexingMapIdx == inputs.size()) {
           // indexing map for the output can always be an identity map
-          affineMaps.push_back(mlir::AffineMap::getMultiDimIdentityMap(resultShape.size(), ctx));
+          affineMaps.push_back(AffineMap::getMultiDimIdentityMap(resultShape.size(), ctx));
           continue;
         } else if (indexingMapIdx == operandIdxToBeReplaced) {
           for (size_t i = 0; i < resultShape.size(); i += 1) {
@@ -314,7 +314,7 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
           }
             
           affineMaps.push_back(
-            mlir::AffineMap::get(
+            AffineMap::get(
               /*dimCount=*/resultShape.size(),
               /*symbolCount=*/0,
               affineExprs,
@@ -334,18 +334,18 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
           affineExprs.push_back(newExpr);
         }
 
-        auto newAffineMap = mlir::AffineMap::get(/*dimCount=*/resultShape.size(), /*symbolCount=*/0, affineExprs, ctx);
+        auto newAffineMap = AffineMap::get(/*dimCount=*/resultShape.size(), /*symbolCount=*/0, affineExprs, ctx);
         affineMaps.push_back(newAffineMap);
         affineExprs.clear();
       }
 
-      llvm::SmallVector<mlir::Attribute> affineMapAttrs;
-      for (auto affineMap : affineMaps) affineMapAttrs.push_back(mlir::AffineMapAttr::get(affineMap));
+      SmallVector<Attribute> affineMapAttrs;
+      for (auto affineMap : affineMaps) affineMapAttrs.push_back(AffineMapAttr::get(affineMap));
       auto indexingMaps = rewriter.getArrayAttr(affineMapAttrs);
       affineMaps.clear();
         
       // iterator types
-      llvm::SmallVector<mlir::Attribute> iteratorTypesAttrs;
+      SmallVector<Attribute> iteratorTypesAttrs;
       for (auto _ : resultShape) iteratorTypesAttrs.push_back(rewriter.getStringAttr("parallel"));
       auto iteratorTypes = rewriter.getArrayAttr(iteratorTypesAttrs);
 
@@ -370,17 +370,17 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
 
       auto oldReshapeOp = isa<tensor::ExpandShapeOp>(opToBeRebuiltAndErased) ?
           dyn_cast<tensor::ExpandShapeOp>(opToBeRebuiltAndErased) : dyn_cast<tensor::CollapseShapeOp>(opToBeRebuiltAndErased);
-      auto oldSrcShapedType = dyn_cast<mlir::ShapedType>(oldReshapeOp->getOperand(0).getType());
-      auto oldResultShapedType = dyn_cast<mlir::ShapedType>(oldReshapeOp->getResult(0).getType());
+      auto oldSrcType = oldReshapeOp->getOperand(0).getType().cast<RankedTensorType>();
+      auto oldResultType = oldReshapeOp->getResult(0).getType().cast<RankedTensorType>();
 
       // cannot be real reshapes, just add several redundant dimensions, in other words, add several '1's to the shape
-      assert(!isReshaped(oldSrcShapedType, oldResultShapedType));
+      assert(!isReshaped(oldSrcType, oldResultType));
 
-      auto newSrcShapedType = dyn_cast<mlir::ShapedType>(clonedOp->getResult(0).getType());
-      auto oldSrcShape = oldSrcShapedType.getShape();
-      auto newSrcShape = newSrcShapedType.getShape();
-      auto oldResultShape = oldResultShapedType.getShape();
-      llvm::SmallVector<int64_t> newResultShape;
+      auto newSrcType = clonedOp->getResult(0).getType().cast<RankedTensorType>();
+      auto oldSrcShape = oldSrcType.getShape();
+      auto newSrcShape = newSrcType.getShape();
+      auto oldResultShape = oldResultType.getShape();
+      SmallVector<int64_t> newResultShape;
       size_t reIndicesIdx = 0;
         
       if (mode != ReshapeKind::CollapseShape) {
@@ -427,23 +427,23 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
         }
       }
 
-      auto newResultShapedType = dyn_cast<mlir::ShapedType>(mlir::RankedTensorType::get(newResultShape, newSrcShapedType.getElementType()));
+      auto newResultType = RankedTensorType::get(newResultShape, newSrcType.getElementType());
       rewriter.setInsertionPoint(oldReshapeOp);
       auto newReshapeOp = isa<tensor::ExpandShapeOp>(opToBeRebuiltAndErased) ? rewriter.create<tensor::ExpandShapeOp>(
           oldReshapeOp->getLoc(),
-          newResultShapedType,
+          newResultType,
           clonedOp->getResult(0),
-          mlir::getReassociationIndicesForReshape(newSrcShapedType, newResultShapedType).value()
+          mlir::getReassociationIndicesForReshape(newSrcType, newResultType).value()
         ) : rewriter.create<tensor::CollapseShapeOp>(
           oldReshapeOp->getLoc(),
-          newResultShapedType,
+          newResultType,
           clonedOp->getResult(0),
-          mlir::getReassociationIndicesForCollapse(newSrcShapedType.getShape(), newResultShapedType.getShape()).value()
+          mlir::getReassociationIndicesForCollapse(newSrcType.getShape(), newResultType.getShape()).value()
         );
 
       switch (mode) {
         case ReshapeKind::ExpandShape:
-          reassociationIndices = mlir::getReassociationIndicesForReshape(oldResultShapedType, newResultShapedType).value();
+          reassociationIndices = mlir::getReassociationIndicesForReshape(oldResultType, newResultType).value();
           break;
 
         case ReshapeKind::Transpose: {
@@ -451,9 +451,9 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
 
           // Reassociation indices of transpose can always be something like [[0], [1], [2], ..., [n]] 
           // --- an one-to-one map with no actual permutations embodied because the newShape has been permutated already
-          auto ranks = newResultShapedType.getRank();
+          auto ranks = newResultType.getRank();
           for (int64_t i = 0; i < ranks; i += 1) {
-            mlir::ReassociationIndices _ = {i};
+            ReassociationIndices _ = {i};
             reassociationIndices.push_back(_);
           }
           break;
@@ -461,7 +461,7 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
         
         case ReshapeKind::CollapseShape:
           reassociationIndices = mlir::getReassociationIndicesForCollapse(
-                                            oldResultShapedType.getShape(), newResultShapedType.getShape()).value();
+                                            oldResultType.getShape(), newResultType.getShape()).value();
           break;
       }
 
@@ -480,6 +480,62 @@ void cloneNewUsersFromReshapeOps(llvm::SmallVector<mlir::Operation*, 128>& path,
 
 
 namespace {
+Operation* getConsistencyReshapeOp(Operation* definingOp, Operation* userOp, PatternRewriter& rewriter) {
+  auto genericOp = dyn_cast<linalg::GenericOp>(userOp);
+  auto genericResultType = genericOp->getResult(0).getType().cast<RankedTensorType>();
+  size_t inputIdx = SIZE_MAX, inputIdxToBeReplaced = SIZE_MAX, indexingMapIdxToCopy = SIZE_MAX;
+  for (auto input : genericOp.getInputs()) {
+    inputIdx += 1;
+    auto inputType = input.getType().cast<RankedTensorType>();
+    if ((void*)input.getDefiningOp() == (void*)definingOp) inputIdxToBeReplaced = inputIdx;
+    if (inputType.getShape() == genericResultType.getShape()) indexingMapIdxToCopy = inputIdx;
+  }
+  assert(inputIdxToBeReplaced != SIZE_MAX && indexingMapIdxToCopy != SIZE_MAX);
+
+  auto resultOfDefiningOp = definingOp->getResult(0);
+  auto resultTypeOfDefiningOp = resultOfDefiningOp.getType().cast<RankedTensorType>();
+  auto afterReshapedType = RankedTensorType::get(genericResultType.getShape(), resultTypeOfDefiningOp.getElementType());
+  rewriter.setInsertionPoint(genericOp);
+  Operation* consistencyReshapeOp = nullptr;
+  if (auto reassociationIndicesForExpand = getReassociationIndicesForReshape(
+    resultTypeOfDefiningOp, afterReshapedType
+  )) {
+    consistencyReshapeOp = rewriter.create<tensor::ExpandShapeOp>(
+      genericOp.getLoc(),
+      afterReshapedType,
+      resultOfDefiningOp,
+      reassociationIndicesForExpand.value()
+    );
+  } else if (auto reassociationIndicesForCollapse = getReassociationIndicesForCollapse(
+    resultTypeOfDefiningOp.getShape(), afterReshapedType.getShape()
+  )) {
+    consistencyReshapeOp = rewriter.create<tensor::CollapseShapeOp>(
+      genericOp.getLoc(),
+      afterReshapedType,
+      resultOfDefiningOp,
+      reassociationIndicesForCollapse.value()
+    );
+  } else if (auto perm = computePermutation(resultTypeOfDefiningOp, afterReshapedType)) {
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+      genericOp.getLoc(), afterReshapedType.getShape(), afterReshapedType.getElementType()
+    );
+    consistencyReshapeOp = rewriter.create<linalg::TransposeOp>(
+      genericOp.getLoc(), resultOfDefiningOp, emptyOp.getResult(), perm.value()
+    );
+  }
+  assert(consistencyReshapeOp != nullptr);
+
+  genericOp.setOperand(inputIdxToBeReplaced, consistencyReshapeOp->getResult(0));
+  
+  SmallVector<AffineMap> indexingMaps = genericOp.getIndexingMapsArray();
+  indexingMaps[inputIdxToBeReplaced] = indexingMaps[indexingMapIdxToCopy];
+  SmallVector<Attribute> indexingMapsAttr;
+  for (auto map : indexingMaps) indexingMapsAttr.push_back(AffineMapAttr::get(map));
+  genericOp.setIndexingMapsAttr(rewriter.getArrayAttr(indexingMapsAttr));
+
+  return consistencyReshapeOp;
+}
+
 /// This pattern will outline ops with the specified type.
 struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
   using OpRewritePattern<hls::TaskOp>::OpRewritePattern;
@@ -487,8 +543,8 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
   LogicalResult matchAndRewrite(hls::TaskOp op,
                                 PatternRewriter &rewriter) const override {
 
-    llvm::SmallVector<mlir::Operation*, 128> ops;
-    llvm::SetVector<mlir::Operation*> opsToFuse;
+    SmallVector<Operation*, 128> ops;
+    SetVector<Operation*> opsToFuse;
 
     int defineUsePaths[128] = {-1, 0};
     int opsIdx = 0;
@@ -500,7 +556,7 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
       // llvm::dbgs() << "Current Result:\n";
       // op.getYieldOp().getOperand(result.getResultNumber()).getDefiningOp()->dump();
       
-      auto srcShapedType = dyn_cast<mlir::ShapedType>(result.getType());
+      auto srcType = result.getType().cast<RankedTensorType>();
       size_t resultIdx = result.getResultNumber();
       // result.getDefiningOp()->dump();
       ops.push_back(result.getDefiningOp());
@@ -512,8 +568,18 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
       // A Breadth-First Search(BFS) is performed here
       while ((++iter) != ops.end()) {
         // (*iter)->dump();
-        auto dstShapedType = dyn_cast<mlir::ShapedType>((*iter)->getResult(_).getType());
-        if (isReshaped(srcShapedType, dstShapedType)) continue;
+        auto dstType = (*iter)->getResult(_).getType().cast<RankedTensorType>();
+        // if (isReshaped(srcType, dstType)) continue;
+        if (isReshaped(srcType, dstType)) {
+          if (!isa<linalg::GenericOp>(*iter)) continue;
+
+          auto genericOp = dyn_cast<linalg::GenericOp>(*iter);
+          auto definingOp = ops[defineUsePaths[iter - ops.begin()]];
+          auto consistencyReshapeOp = getConsistencyReshapeOp(definingOp, genericOp.getOperation(), rewriter);
+
+          *iter = consistencyReshapeOp;
+          continue;
+        }
 
         for (auto& use : llvm::make_early_inc_range((*iter)->getResult(_).getUses())) {
           auto p = use.getOwner();
@@ -526,13 +592,13 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
         _ = 0;
       }
 
-      llvm::SmallVector<mlir::Operation*, 128> path;
+      SmallVector<Operation*, 128> path;
       for (size_t idx = opsIdx; idx != SIZE_MAX; idx -= 1) {
         // llvm::dbgs() << ops.size() << "\n";
         iter = ops.begin() + idx;
         if (isa<hls::TaskOp>(*iter)) continue;
-        auto dstShapedType = dyn_cast<mlir::ShapedType>((*iter)->getResult(0).getType());
-        if (!isReshaped(srcShapedType, dstShapedType)) continue;
+        auto dstType = (*iter)->getResult(0).getType().cast<RankedTensorType>();
+        if (!isReshaped(srcType, dstType)) continue;
         // llvm::dbgs() << "Walk through every path:\n";
         path.push_back(*iter);
         // (*iter)->dump();
@@ -549,14 +615,14 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
 
         if (isa<tensor::ExpandShapeOp>(reshapeOp)) {
           // Target shaped-type with redundant dimensions and element type in uniform with the src.
-          auto dstShapedTypeUniformedWithSrc = getDstShapedTypeUniformedWithSrc(srcShapedType, dstShapedType, ReshapeKind::ExpandShape);
+          auto dstTypeUniformedWithSrc = getDstTypeUniformedWithSrc(srcType, dstType, ReshapeKind::ExpandShape);
         
           rewriter.setInsertionPointAfter(opsToFuse.back());
           auto upliftedExpandShapeOp = rewriter.create<tensor::ExpandShapeOp>(
             opsToFuse.back()->getLoc(), 
-            dstShapedTypeUniformedWithSrc, 
+            dstTypeUniformedWithSrc, 
             taskOp->getResult(resultIdx), 
-            mlir::getReassociationIndicesForReshape(srcShapedType, dstShapedTypeUniformedWithSrc).value()
+            getReassociationIndicesForReshape(srcType, dstTypeUniformedWithSrc).value()
           );
 
           // llvm::dbgs() << "Uplifted ExpandShape:\n";
@@ -566,12 +632,12 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
           opsToFuse.insert(upliftedExpandShapeOp.getOperation());
         } else if (isa<linalg::TransposeOp>(reshapeOp)) {
           // Target shaped-type with redundant dimensions and element type in uniform with the src.
-          auto dstShapedTypeUniformedWithSrc = getDstShapedTypeUniformedWithSrc(srcShapedType, dstShapedType, ReshapeKind::Transpose);
+          auto dstTypeUniformedWithSrc = getDstTypeUniformedWithSrc(srcType, dstType, ReshapeKind::Transpose);
           
 
           rewriter.setInsertionPointAfter(opsToFuse.back());
           auto emptyOp = rewriter.create<tensor::EmptyOp>(
-            opsToFuse.back()->getLoc(), dstShapedTypeUniformedWithSrc.getShape(), dstShapedTypeUniformedWithSrc.getElementType()
+            opsToFuse.back()->getLoc(), dstTypeUniformedWithSrc.getShape(), dstTypeUniformedWithSrc.getElementType()
           );
           opsToFuse.insert(emptyOp.getOperation());
 
@@ -580,7 +646,7 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
             opsToFuse.back()->getLoc(),
             taskOp->getResult(resultIdx),
             emptyOp.getResult(),
-            rewriter.getDenseI64ArrayAttr(computePermutation(srcShapedType, dstShapedTypeUniformedWithSrc))
+            rewriter.getDenseI64ArrayAttr(computePermutation(srcType, dstTypeUniformedWithSrc).value())
           );
 
           // llvm::dbgs() << "Uplifted Transpose:\n";
@@ -592,15 +658,15 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
 
         } else if (isa<tensor::CollapseShapeOp>(reshapeOp)) {
           // Target shaped-type with redundant dimensions and element type in uniform with the src.
-          auto dstShapedTypeUniformedWithSrc = getDstShapedTypeUniformedWithSrc(srcShapedType, dstShapedType, ReshapeKind::CollapseShape);
+          auto dstTypeUniformedWithSrc = getDstTypeUniformedWithSrc(srcType, dstType, ReshapeKind::CollapseShape);
         
           rewriter.setInsertionPointAfter(opsToFuse.back());
-          // dstShapedTypeUniformedWithSrc.dump();
+          // dstTypeUniformedWithSrc.dump();
           auto upliftedCollapseShapeOp = rewriter.create<tensor::CollapseShapeOp>(
             opsToFuse.back()->getLoc(),
-            dstShapedTypeUniformedWithSrc,
+            dstTypeUniformedWithSrc,
             taskOp->getResult(resultIdx),
-            mlir::getReassociationIndicesForCollapse(srcShapedType.getShape(), dstShapedTypeUniformedWithSrc.getShape()).value()
+            getReassociationIndicesForCollapse(srcType.getShape(), dstTypeUniformedWithSrc.getShape()).value()
           );
 
           // llvm::dbgs() << "Uplifted CollapseShape:\n";

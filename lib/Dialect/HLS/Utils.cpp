@@ -335,7 +335,7 @@ bool scalehls::isReductionTypeGenericOp(mlir::Operation* op) {
   return reductionType;
 }
 
-bool scalehls::isReshaped(mlir::ShapedType& st0, mlir::ShapedType& st1) {
+bool scalehls::isReshaped(RankedTensorType& st0, RankedTensorType& st1) {
   auto s0 = st0.getShape();
   auto s1 = st1.getShape();
 
@@ -363,19 +363,19 @@ bool scalehls::isReshaped(mlir::ShapedType& st0, mlir::ShapedType& st1) {
 }
 
 
-llvm::SmallVector<int64_t> scalehls::computePermutation(mlir::ShapedType src, mlir::ShapedType dst) {
+Optional<SmallVector<int64_t>> scalehls::computePermutation(RankedTensorType src, RankedTensorType dst) {
   auto srcShape = src.getShape();
   auto dstShape = dst.getShape();
-  if (src.getRank() != dst.getRank()) llvm::report_fatal_error("Shapes are not a permutation!");
+  if (src.getRank() != dst.getRank()) return llvm::None;
 
   int rank = src.getRank();
-  llvm::SmallVector<int64_t> perm(rank);
+  SmallVector<int64_t> perm(rank);
 
   for (int i = 0; i < rank; ++i) {
-    // 在 src 中找到 dst[i] 对应的维度位置
+    // find the position of dst[i] in src
     auto it = llvm::find(srcShape, dstShape[i]);
     if (it == srcShape.end())
-      llvm::report_fatal_error("Shapes are not a permutation!");
+      return llvm::None;
 
     perm[i] = std::distance(srcShape.begin(), it);
   }

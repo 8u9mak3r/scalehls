@@ -10,7 +10,7 @@ using namespace hls;
 
 namespace {
 LogicalResult generalizeNamedOpPrecondition(linalg::LinalgOp linalgOp) {
-  if (isa<linalg::MatmulOp, linalg::BatchMatmulOp>(linalgOp)) return success();
+  if (isa<linalg::MatmulOp, linalg::BatchMatmulOp, linalg::ReduceOp>(linalgOp)) return success();
   return failure();
 }
 
@@ -57,7 +57,7 @@ AffineMap getNewAffineMapForOutputFromExpand(AffineMap map,
 
   size_t exprIdx = SIZE_MAX;
   for (auto expr : map.getResults()) {
-    ++exprIdx;
+    exprIdx += 1;
     auto indices = *(reassociationIndices.begin() + exprIdx);
 
     if (indices.size() > 1) {
@@ -147,7 +147,7 @@ struct BackwardFuse : public OpRewritePattern<linalg::GenericOp> {
         auto output = genericOp.getOutputs()[resultIdx];
 
         if (isa<hls::YieldOp>(user)) {
-          auto resultType = dyn_cast<RankedTensorType>(result.getType());
+          auto resultType = result.getType().cast<RankedTensorType>();
           resultTypes.push_back(resultType);
 
           outputs.push_back(output);
@@ -156,7 +156,7 @@ struct BackwardFuse : public OpRewritePattern<linalg::GenericOp> {
           continue;
         }
 
-        auto resultType = dyn_cast<RankedTensorType>(user->getResult(0).getType());
+        auto resultType = user->getResult(0).getType().cast<RankedTensorType>();
         resultTypes.push_back(resultType);
         
         auto emptyOp = rewriter.create<tensor::EmptyOp>(
@@ -308,7 +308,7 @@ struct ForwardFuse : public OpRewritePattern<linalg::GenericOp> {
 
     MLIRContext* ctx = rewriter.getContext();
     auto loc = genericOp.getLoc();
-    auto resultType = dyn_cast<RankedTensorType>(genericOp.getResult(0).getType());
+    auto resultType = genericOp.getResult(0).getType().cast<RankedTensorType>();
     SmallVector<Value> inputs = genericOp.getInputOperands();
     SmallVector<Value> outputs = genericOp.getOutputOperands();
     SmallVector<AffineMap> indexingMaps = genericOp.getIndexingMapsArray();
@@ -325,11 +325,11 @@ struct ForwardFuse : public OpRewritePattern<linalg::GenericOp> {
     bool fused = false;
     for (auto [input, indexingMapOfInput] : llvm::zip(genericOp.getInputs(), indexingMaps)) {
       auto definingOp = input.getDefiningOp();
-      if (definingOp == nullptr) goto _else;  // ignore all func args
+      if (definingOp == nullptr) goto _else;  // this means the input is a func arg, just ignore and jump to the else branch
 
       if (isa<tensor::ExpandShapeOp, tensor::CollapseShapeOp>(definingOp)) {
-        auto srcTypeOfDefiningOp = dyn_cast<mlir::ShapedType>(definingOp->getOperand(0).getType());
-        auto dstTypeOfDefiningOp = dyn_cast<mlir::ShapedType>(definingOp->getResult(0).getType());
+        auto srcTypeOfDefiningOp = definingOp->getOperand(0).getType().cast<RankedTensorType>();
+        auto dstTypeOfDefiningOp = definingOp->getResult(0).getType().cast<RankedTensorType>();
         assert(!isReshaped(srcTypeOfDefiningOp, dstTypeOfDefiningOp));
 
         newInputs.push_back(definingOp->getOperand(0));
