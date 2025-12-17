@@ -108,7 +108,7 @@ struct ScaleFlowPyTorchPipelineOptions
       llvm::cl::desc("Whether to consider node correlation in the transform")};
 
   Option<bool> placeExternalBuffer{
-      *this, "place-external-buffer", llvm::cl::init(true),
+      *this, "place-external-buffer", llvm::cl::init(false),
       llvm::cl::desc("Place buffers in external memories")};
 
   Option<bool> balanceDataflow{
@@ -306,7 +306,7 @@ entry_7:
 entry_8:
         // Local buffer allocation.
         scalehls::addCreateSubviewPasses(pm);
-        pm.addPass(scalehls::createCreateLocalBufferPass());
+        pm.addPass(scalehls::createCreateLocalBufferPass(/*externalBufferOnly=*/false));
         pm.addPass(scalehls::createLowerCopyToAffinePass());
         pm.addPass(memref::createFoldMemRefAliasOpsPass());
         pm.addPass(mlir::createSimplifyAffineStructuresPass());
@@ -331,12 +331,12 @@ entry_10:
         pm.addPass(scalehls::createLowerDataflowPass());
         pm.addPass(scalehls::createEliminateMultiProducerPass());
         pm.addPass(scalehls::createEliminateMultiConsumerPass());
-        pm.addPass(scalehls::createScheduleDataflowNodePass());
-        if (opts.balanceDataflow.getValue())
-          pm.addPass(scalehls::createBalanceDataflowNodePass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
-        pm.addPass(scalehls::createAffineStoreForwardPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(scalehls::createScheduleDataflowNodePass());
+        // if (opts.balanceDataflow.getValue())
+        //   pm.addPass(scalehls::createBalanceDataflowNodePass());
+        // pm.addPass(scalehls::createLowerCopyToAffinePass());
+        // pm.addPass(scalehls::createAffineStoreForwardPass());
+        // pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 10)
           return;
