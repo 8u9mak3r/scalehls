@@ -19,11 +19,15 @@ bool hasDataDependency(hls::NodeOp& a, hls::NodeOp& b) {
   users.push_back(a.getOperation());
   while (!users.empty()) {
     auto node = dyn_cast<hls::NodeOp>(users.front());
-    if (node == b) return true;
+    node.dump();
+    if (node == b) {llvm::dbgs() << "\n\n\n\n\n\n";return true;}
     users.erase(users.begin());
-    users.append(SmallVector<Operation*>(node->getUsers()));
+    for (auto output : node.getOutputs()) 
+      for (auto user : output.getUsers())
+        if (user != node.getOperation())
+          users.push_back(user);
   }
-
+  llvm::dbgs() << "\n\n\n\n\n\n";
   return false;
 }
 
@@ -42,7 +46,7 @@ struct InsertForkNode : public OpRewritePattern<NodeOp> {
       // are handled later by tokens.
       if (isExternalBuffer(output))
         continue;
-        
+
       auto consumers = getDependentConsumers(output, node);
       if (consumers.size() < 2) 
         continue;
@@ -53,8 +57,7 @@ struct InsertForkNode : public OpRewritePattern<NodeOp> {
       size_t numOfParallelNodes = 1, maxNumOfParallelNodes = 1;
       auto iterOfFirstParallelNode = consumers.begin(), iter = consumers.begin() + 1;
       while (iter != consumers.end()) {
-        
-        if (hasDataDependency(*iterOfFirstParallelNode, *iter)) {
+        if (!hasDataDependency(*iterOfFirstParallelNode, *iter)) {
           numOfParallelNodes += 1;
         } else {
           numOfParallelNodes = 1;
@@ -63,8 +66,7 @@ struct InsertForkNode : public OpRewritePattern<NodeOp> {
         maxNumOfParallelNodes = std::max(maxNumOfParallelNodes, numOfParallelNodes);
         iter += 1;
       }
-
-      llvm::dbgs() << maxNumOfParallelNodes << "\n";
+      
       if (maxNumOfParallelNodes < 2) continue;
       
       hasChanged = true;
