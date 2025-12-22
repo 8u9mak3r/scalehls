@@ -206,8 +206,8 @@ struct LegalizeDataflow : public LegalizeDataflowBase<LegalizeDataflow> {
 
     // Fuse multi consumer and bypass path dataflow nodes.
     mlir::RewritePatternSet patterns(context);
-    patterns.add<FuseMultiConsumer>(context);
-    patterns.add<FuseBypassPath>(context);
+    // patterns.add<FuseMultiConsumer>(context);
+    // patterns.add<FuseBypassPath>(context);
     auto frozenPatterns = FrozenRewritePatternSet(std::move(patterns));
 
     func.walk([&](ScheduleOp schedule) {

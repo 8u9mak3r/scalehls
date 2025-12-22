@@ -112,7 +112,7 @@ struct ScaleFlowPyTorchPipelineOptions
       llvm::cl::desc("Place buffers in external memories")};
 
   Option<bool> balanceDataflow{
-      *this, "balance-dataflow", llvm::cl::init(true),
+      *this, "balance-dataflow", llvm::cl::init(false),
       llvm::cl::desc("Whether to balance the dataflow")};
 
   Option<bool> axiInterface{*this, "axi-interface", llvm::cl::init(true),
@@ -331,12 +331,12 @@ entry_10:
         pm.addPass(scalehls::createLowerDataflowPass());
         pm.addPass(scalehls::createEliminateMultiProducerPass());
         pm.addPass(scalehls::createEliminateMultiConsumerPass());
-        // pm.addPass(scalehls::createScheduleDataflowNodePass());
-        // if (opts.balanceDataflow.getValue())
-        //   pm.addPass(scalehls::createBalanceDataflowNodePass());
-        // pm.addPass(scalehls::createLowerCopyToAffinePass());
-        // pm.addPass(scalehls::createAffineStoreForwardPass());
-        // pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(scalehls::createScheduleDataflowNodePass());
+        if (opts.balanceDataflow.getValue())
+          pm.addPass(scalehls::createBalanceDataflowNodePass());
+        pm.addPass(scalehls::createLowerCopyToAffinePass());
+        pm.addPass(scalehls::createAffineStoreForwardPass());
+        pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 10)
           return;
@@ -505,11 +505,11 @@ void scalehls::registerScaleFlowCppPipeline() {
         pm.addPass(scalehls::createLowerDataflowPass());
         pm.addPass(scalehls::createEliminateMultiProducerPass());
         pm.addPass(scalehls::createEliminateMultiConsumerPass());
-        pm.addPass(scalehls::createScheduleDataflowNodePass());
-        pm.addPass(scalehls::createBalanceDataflowNodePass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
-        pm.addPass(scalehls::createAffineStoreForwardPass());
-        pm.addPass(mlir::createCanonicalizerPass());
+        // pm.addPass(scalehls::createScheduleDataflowNodePass());
+        // pm.addPass(scalehls::createBalanceDataflowNodePass());
+        // pm.addPass(scalehls::createLowerCopyToAffinePass());
+        // pm.addPass(scalehls::createAffineStoreForwardPass());
+        // pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 10)
           return;
