@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/Debug.h"
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
 
@@ -89,20 +90,20 @@ bool scalehls::applyArrayPartition(Value array, ArrayRef<unsigned> factors,
   // Set new type.
   array.setType(newType);
 
-  if (updateFuncSignature)
-    if (auto func =
-            dyn_cast<func::FuncOp>(array.getParentBlock()->getParentOp())) {
-      // Align function type with entry block argument types only if the array
-      // is defined as an argument of the function.
-      if (!array.getDefiningOp()) {
-        auto resultTypes = func.front().getTerminator()->getOperandTypes();
-        auto inputTypes = func.front().getArgumentTypes();
-        func.setType(builder.getFunctionType(inputTypes, resultTypes));
-      }
+  // if (updateFuncSignature)
+  //   if (auto func =
+  //           dyn_cast<func::FuncOp>(array.getParentBlock()->getParentOp())) {
+  //     // Align function type with entry block argument types only if the array
+  //     // is defined as an argument of the function.
+  //     if (!array.getDefiningOp()) {
+  //       auto resultTypes = func.front().getTerminator()->getOperandTypes();
+  //       auto inputTypes = func.front().getArgumentTypes();
+  //       func.setType(builder.getFunctionType(inputTypes, resultTypes));
+  //     }
 
-      // Update the types of all sub-functions.
-      updateSubFuncs(func, builder);
-    }
+  //     // Update the types of all sub-functions.
+  //     updateSubFuncs(func, builder);
+  //   }
   return true;
 }
 
@@ -193,230 +194,188 @@ getDimAccessMaps(Operation *op, AffineValueMap valueMap, int64_t dim) {
   return maps;
 }
 
+namespace
+{
+using PartitionInfo = std::pair<PartitionKind, int64_t>;
+/// Partition info are decided by the induction loop variable affiliated to the innermost loop layer;
+std::pair<PartitionInfo, int64_t>
+calculateDimAccessDistance(AffineExpr accessExpr, Operation* accessOp, DenseMap<AffineExpr, Value>& exprOperandMap) {
+  auto partition = std::pair<PartitionInfo, int64_t>();
+
+  if (auto binaryOpExpr = accessExpr.dyn_cast<AffineBinaryOpExpr>()) {
+    auto lhs = binaryOpExpr.getLHS();
+    auto rhs = binaryOpExpr.getRHS();
+    auto exprKind = binaryOpExpr.getKind();
+    auto partitionLHS = calculateDimAccessDistance(lhs, accessOp, exprOperandMap);
+    auto partitionRHS = calculateDimAccessDistance(rhs, accessOp, exprOperandMap);
+
+    // return the one decided by an inner loop
+    int64_t levelLHS = partitionLHS.second;
+    int64_t levelRHS = partitionRHS.second;
+    partition = levelLHS > levelRHS ? partitionLHS : partitionRHS;
+
+    if (partition.first.first == PartitionKind::NONE) {
+      switch (exprKind) {
+        // the most common cases
+        case AffineExprKind::Add:
+          partition.first.first = PartitionKind::CYCLIC;
+          break;
+
+        case AffineExprKind::Mul:
+          partition.first.first = PartitionKind::BLOCK;
+          break;
+      
+        default:
+          break;
+      }
+    }
+  } else if (auto dimExpr = accessExpr.dyn_cast<AffineDimExpr>()) {
+    auto dimInductionVar = exprOperandMap[dimExpr];
+    auto loop = dyn_cast<AffineForOp>(accessOp->getParentOp());
+    int64_t level = 0;
+
+    while (loop != nullptr) {
+      auto loopInductionVar = loop.getInductionVar();
+      if (loopInductionVar == dimInductionVar) {
+        // calculate the level of this decisive loop
+        auto outerLoop = dyn_cast<AffineForOp>(loop->getParentOp());
+        while(outerLoop != nullptr) {
+          level += 1;
+          outerLoop = dyn_cast<AffineForOp>(outerLoop->getParentOp());
+        }
+        break;
+      }
+
+      loop = dyn_cast<AffineForOp>(loop->getParentOp());
+    }
+    // Partition kind will later be decided by the AffineExprKind of parent affine expression 
+    partition = std::pair<PartitionInfo, int64_t>(PartitionInfo(PartitionKind::NONE, loop.getConstantUpperBound()), level);
+  } else {
+    assert(accessExpr.isa<AffineConstantExpr>() || accessExpr.isa<AffineSymbolExpr>());
+    partition = std::pair<PartitionInfo, int64_t>(PartitionInfo(PartitionKind::NONE, 1), -1);
+  }
+
+  return partition;
+}
+} // namespace
+
+namespace
+{
+using MemAccessOpWithAffineValueMap = std::pair<Operation*, AffineValueMap>;
+
+/// Started from the top func, to collect load and store operations in every subfunc and return them in "map".
+void getMemAccessOpsInfo(func::FuncOp& funcOp, SmallVector<MemAccessOpWithAffineValueMap, 8>& ops,
+                                                                      unsigned operandIdx) {
+  auto arg = funcOp.getArgument(operandIdx);
+  // auto funcName = funcOp.getNameAttr();
+  
+  for (auto& use : arg.getUses()) {
+    auto user = use.getOwner();
+
+    if (isa<func::CallOp>(user)) {
+      auto callOp = dyn_cast<func::CallOp>(user);
+      auto callee = SymbolTable::lookupNearestSymbolFrom(callOp, callOp.getCalleeAttr());
+      auto subFunc = dyn_cast<func::FuncOp>(callee);
+      assert(subFunc && "callable is not a function operation");
+      unsigned idx = use.getOperandNumber();
+      getMemAccessOpsInfo(subFunc, ops, idx);
+    } else if (isa<AffineLoadOp, AffineStoreOp>(user)) {
+      auto affineValueMap = getAffineValueMap(user);
+      ops.push_back(MemAccessOpWithAffineValueMap(user, affineValueMap));
+    } else {
+      llvm_unreachable("......\n");
+    }
+  }
+}
+} // namespace
+
+/// Find the suitable array partition factors and kinds for the input buffer
+static std::pair<SmallVector<PartitionKind>, SmallVector<unsigned>>
+getArrayPartition (Value buffer) {
+  SmallVector<MemAccessOpWithAffineValueMap, 8> memAccessOpsInfo;
+
+  for (auto& use : buffer.getUses()) {
+    auto user = use.getOwner();
+    if (auto callOp = dyn_cast<func::CallOp>(user)) {
+      auto callee = SymbolTable::lookupNearestSymbolFrom(callOp, callOp.getCalleeAttr());
+      auto subFunc = dyn_cast<func::FuncOp>(callee);
+      assert(subFunc && "callable is not a function operation");
+      unsigned operandIdx = use.getOperandNumber();
+      getMemAccessOpsInfo(subFunc, memAccessOpsInfo, operandIdx);
+    }
+  }
+
+  llvm::dbgs() << "Buffer:\n";
+  buffer.dump();
+  SmallVector<PartitionKind> kinds;
+  SmallVector<unsigned> factors;
+  for (int64_t dim = 0; dim < buffer.getType().dyn_cast<MemRefType>().getRank(); dim += 1) {
+    auto dimPartition = PartitionInfo(PartitionKind::NONE, 1);
+
+    for (auto opInfo : memAccessOpsInfo) {
+      auto accessOp = opInfo.first;
+      auto accessAffineValueMap = opInfo.second;
+      // For now we don't take vector ops into consideration, so the returned SmallVector only has one AffineValueMap in it.
+      auto dimAccessMap = *getDimAccessMaps(accessOp, accessAffineValueMap, dim).begin();
+      auto dimAccessAffinevalueMap = AffineValueMap(dimAccessMap, accessAffineValueMap.getOperands());
+          
+      SmallVector<AffineExpr> exprs;
+      for (unsigned i = 0; i < dimAccessAffinevalueMap.getNumDims(); i += 1)
+        exprs.push_back(mlir::getAffineDimExpr(i, buffer.getContext()));
+      for (unsigned i = 0; i < dimAccessAffinevalueMap.getNumSymbols(); i += 1)
+        exprs.push_back(mlir::getAffineSymbolExpr(i, buffer.getContext()));
+
+      auto exprOperandMap = DenseMap<AffineExpr, Value>();
+      for (auto expr : llvm::enumerate(exprs)) 
+        exprOperandMap[expr.value()] = dimAccessAffinevalueMap.getOperand(expr.index());
+
+      // llvm::dbgs() << "Dim access map:\n";
+      // dimAccessAffinevalueMap.getAffineMap().dump();
+      auto partition = calculateDimAccessDistance(dimAccessAffinevalueMap.getResult(0), accessOp, exprOperandMap).first;
+      dimPartition = partition.second <= dimPartition.second ? dimPartition : partition;
+      // llvm::dbgs() << "Partition Kind: " << (int)partition.first << " Partition factor: " << partition.second << "\n";
+    }
+
+      
+    llvm::dbgs() << "Dim: " << dim << " Partition Kind: " << (int)dimPartition.first 
+                    << " Partition factor: " << dimPartition.second << "\n";
+    /// For now, we only apply one particular partition method to a certain dimension of the buffer, 
+    /// and place corresponding HLS directive macros at its definition and every reference
+    kinds.push_back(dimPartition.first);
+    factors.push_back(dimPartition.second);
+  }
+
+  return {kinds, factors};
+}
+
+
 /// Find the suitable array partition factors and kinds for all arrays in the
 /// targeted function.
 bool scalehls::applyAutoArrayPartition(func::FuncOp func) {
-  // Check whether the input function is pipelined.
-  bool funcPipeline = false;
-  if (auto attr = getFuncDirective(func))
-    funcPipeline = attr.getPipeline();
+  func.walk([&](hls::BufferOp buffer){
+    auto partition = getArrayPartition(buffer);
+    auto kinds = partition.first;
+    auto factors = partition.second;
+    applyArrayPartition(buffer, factors, kinds, /*updateFuncSignature=*/true);
 
-  // Collect target basic blocks to be considered.
-  SmallVector<Block *, 4> targetBlocks;
-  if (funcPipeline)
-    targetBlocks.push_back(&func.front());
-  else {
-    // Collect all target loop bands.
-    AffineLoopBands targetBands;
-    getLoopBands(func.front(), targetBands);
-
-    // Apply loop order optimization to each loop band.
-    for (auto &band : targetBands)
-      targetBlocks.push_back(band.back().getBody());
-  }
-
-  // Storing the partition information of each memref. The rationale is there
-  // may exist multiple blocks/functions accessing the same memref and in
-  // different blocks/functions the best partition fashions and factors are
-  // different. To eventually determine a "best" array partition strategy,
-  // tentatively we always pick the one with the largest partition factor as the
-  // final partition strategy. This "partitionsMap" is used to hold the current
-  // partition strategy of each memref.
-  using PartitionInfo = std::pair<PartitionKind, int64_t>;
-  DenseMap<Value, SmallVector<PartitionInfo, 4>> partitionsMap;
-
-  // Traverse all blocks that requires to be considered.
-  for (auto block : targetBlocks) {
-    MemAccessesMap accessesMap;
-    getMemAccessesMap(*block, accessesMap, /*includeVectorTransfer=*/true);
-
-    for (auto pair : accessesMap) {
-      auto memref = pair.first;
-      auto memrefType = memref.getType().cast<MemRefType>();
-      auto loadStores = pair.second;
-      auto &partitions = partitionsMap[memref];
-
-      // If the current partitionsMap is empty, initialize it with no partition
-      // and factor of 1.
-      if (partitions.empty()) {
-        for (int64_t dim = 0; dim < memrefType.getRank(); ++dim)
-          partitions.push_back(PartitionInfo(PartitionKind::NONE, 1));
-      }
-
-      // Find the best partition solution for each dimensions of the memref.
-      for (int64_t dim = 0; dim < memrefType.getRank(); ++dim) {
-        // Collect all array access indices of the current dimension.
-        SmallVector<AffineValueMap, 4> indices;
-
-        for (auto accessOp : loadStores) {
-          auto valueMap = getAffineValueMap(accessOp);
-          if (valueMap.getAffineMap().isEmpty())
-            continue;
-
-          auto dimMaps = getDimAccessMaps(accessOp, valueMap, dim);
-          for (auto dimMap : dimMaps) {
-            // Construct the new valueMap.
-            AffineValueMap dimValueMap(dimMap, valueMap.getOperands());
-            (void)dimValueMap.canonicalize();
-
-            // Only add unique index.
-            if (find_if(indices, [&](auto index) {
-                  return index.getAffineMap() == dimValueMap.getAffineMap() &&
-                         index.getOperands() == dimValueMap.getOperands();
-                }) == indices.end())
-              indices.push_back(dimValueMap);
-          }
-        }
-        auto accessNum = indices.size();
-
-        // Find the max array access distance in the current block.
-        unsigned maxDistance = 0;
-        unsigned maxCommonDivisor = 0;
-        bool requireMux = false;
-
-        for (unsigned i = 0; i < accessNum; ++i) {
-          for (unsigned j = i + 1; j < accessNum; ++j) {
-            if (indices[i].getOperands() != indices[j].getOperands()) {
-              requireMux = true;
-              continue;
-            }
-
-            auto expr = indices[j].getResult(0) - indices[i].getResult(0);
-            auto newExpr = simplifyAffineExpr(expr, indices[i].getNumDims(),
-                                              indices[i].getNumSymbols());
-
-            if (auto constDistance = newExpr.dyn_cast<AffineConstantExpr>()) {
-              unsigned distance = std::abs(constDistance.getValue());
-              maxDistance = std::max(maxDistance, distance);
-              maxCommonDivisor = std::gcd(distance, maxCommonDivisor);
-            } else
-              requireMux = true;
-          }
-        }
-        ++maxDistance;
-
-        // This means all accesses have the same index, and this dimension
-        // should not be partitioned.
-        if (maxDistance == 1)
-          continue;
-
-        // Determine array partition factor and kind.
-        // TODO: take storage type into consideration.
-        unsigned factor = 1;
-        PartitionKind kind = PartitionKind::NONE;
-        if (accessNum >= maxDistance) {
-          // This means some elements are accessed more than once or exactly
-          // once, and successive elements are accessed. In most cases, apply
-          // "cyclic" partition should be the best solution.
-          factor = maxDistance;
-          kind = PartitionKind::CYCLIC;
-        } else if (maxCommonDivisor > 1) {
-          // This means the memory access is perfectly strided.
-          factor = maxDistance;
-          while (factor % maxCommonDivisor != 0)
-            factor++;
-          kind = PartitionKind::CYCLIC;
-        } else {
-          // This means elements are accessed in a descrete manner however not
-          // strided. Typically, "block" partition will be the most benefitial
-          // partition strategy.
-          factor = accessNum;
-          kind = PartitionKind::BLOCK;
-        }
-
-        // The rationale here is if the accessing partition index cannot be
-        // determined and partition factor is more than 3, a multiplexer will be
-        // generated and the memory access operation will be wrapped into a
-        // function call, which will cause dependency problems and make the
-        // latency and II even worse.
-        if (factor > partitions[dim].second) {
-          if (requireMux)
-            for (auto i = 3; i > 0; --i) {
-              if (factor % i == 0) {
-                partitions[dim] = PartitionInfo(PartitionKind::CYCLIC, i);
-                break;
-              }
-            }
-          else
-            partitions[dim] = PartitionInfo(PartitionKind::CYCLIC, factor);
-        }
-      }
-    }
-  }
-
-  // Apply partition to all sub-functions and traverse all function to update
-  // the "partitionsMap".
-  func.walk([&](func::CallOp op) {
-    auto callee = SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr());
-    auto subFunc = dyn_cast<func::FuncOp>(callee);
-    assert(subFunc && "callable is not a function operation");
-
-    // Apply array partition to the sub-function.
-    applyAutoArrayPartition(subFunc);
-
-    auto subFuncType = subFunc.getFunctionType();
-    unsigned index = 0;
-    for (auto inputType : subFuncType.getInputs()) {
-      if (auto memrefType = inputType.dyn_cast<MemRefType>()) {
-        auto &partitions = partitionsMap[op.getOperand(index)];
-        auto layoutMap = memrefType.getLayout().getAffineMap();
-
-        // If the current partitionsMap is empty, initialize it with no
-        // partition and factor of 1.
-        if (partitions.empty()) {
-          for (int64_t dim = 0; dim < memrefType.getRank(); ++dim)
-            partitions.push_back(PartitionInfo(PartitionKind::NONE, 1));
-        }
-
-        // Get the partition factor collected from sub-function.
-        SmallVector<int64_t, 8> factors;
-        getPartitionFactors(memrefType, &factors);
-
-        // Traverse all dimension of the memref.
-        for (int64_t dim = 0; dim < memrefType.getRank(); ++dim) {
-          auto factor = factors[dim];
-
-          // If the factor from the sub-function is larger than the current
-          // factor, replace it.
-          if (factor > partitions[dim].second) {
-            if (layoutMap.getResult(dim).getKind() == AffineExprKind::FloorDiv)
-              partitions[dim] = PartitionInfo(PartitionKind::BLOCK, factor);
-            else
-              partitions[dim] = PartitionInfo(PartitionKind::CYCLIC, factor);
-          }
-        }
-      }
-
-      ++index;
-    }
+    llvm::dbgs() << "\n\n\n";
   });
 
-  // Constuct and set new type to each partitioned MemRefType.
-  auto builder = Builder(func);
-  for (auto pair : partitionsMap) {
-    auto memref = pair.first;
-    auto partitions = pair.second;
+  for (auto funcArg : func.getArguments()) {
+    auto partition = getArrayPartition(funcArg);
+    auto kinds = partition.first;
+    auto factors = partition.second;
+    applyArrayPartition(funcArg, factors, kinds, /*updateFuncSignature=*/true);
 
-    SmallVector<hls::PartitionKind, 4> kinds;
-    SmallVector<unsigned, 4> factors;
-    for (auto info : partitions) {
-      kinds.push_back(info.first);
-      factors.push_back(info.second);
-    }
-
-    if (llvm::any_of(factors, [](unsigned factor) { return factor != 1; }))
-      applyArrayPartition(memref, factors, kinds,
-                          /*updateFuncSignature=*/false);
+    llvm::dbgs() << "\n\n\n";
   }
 
-  // Align function type with entry block argument types.
+  Builder builder(func.getContext());
   auto resultTypes = func.front().getTerminator()->getOperandTypes();
   auto inputTypes = func.front().getArgumentTypes();
   func.setType(builder.getFunctionType(inputTypes, resultTypes));
 
-  // Update the types of all sub-functions.
   updateSubFuncs(func, builder);
-
   return true;
 }
 

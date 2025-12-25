@@ -115,7 +115,7 @@ struct ScaleFlowPyTorchPipelineOptions
       *this, "balance-dataflow", llvm::cl::init(false),
       llvm::cl::desc("Whether to balance the dataflow")};
 
-  Option<bool> axiInterface{*this, "axi-interface", llvm::cl::init(true),
+  Option<bool> axiInterface{*this, "axi-interface", llvm::cl::init(false),
                             llvm::cl::desc("Create AXI interface")};
 
   Option<bool> vectorize{*this, "vectorize", llvm::cl::init(false),

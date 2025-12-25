@@ -14,7 +14,7 @@ using namespace scalehls;
 using namespace hls;
 
 namespace {
-hls::NodeOp rebuildNodeOpRecursively(hls::NodeOp& node,
+void rebuildNodeOpRecursively(hls::NodeOp& node,
                                     SmallVector<Value> oldBuffers,
                                     SmallVector<Value> newBuffers,
                                     PatternRewriter& rewriter) {
@@ -84,12 +84,8 @@ hls::NodeOp rebuildNodeOpRecursively(hls::NodeOp& node,
     assert(isa<hls::NodeOp>(userInSchedule));
 
     auto nodeOpInSchedule = dyn_cast<hls::NodeOp>(userInSchedule);
-    auto newNode = rebuildNodeOpRecursively(
-      nodeOpInSchedule,
-      oldBufferArgsInSchedule,
-      newBufferArgsInSchedule,
-      rewriter
-    );
+    rebuildNodeOpRecursively(nodeOpInSchedule, oldBufferArgsInSchedule,
+                            newBufferArgsInSchedule, rewriter);
     
     rewriter.setInsertionPoint(schedule);
     auto newSchedule = rewriter.create<hls::ScheduleOp>(schedule.getLoc(), scheduleInputs);
@@ -133,7 +129,6 @@ hls::NodeOp rebuildNodeOpRecursively(hls::NodeOp& node,
   );
   rewriter.inlineRegionBefore(nodeBody, newNode.getBody(), newNode.getBody().begin());
   rewriter.eraseOp(node);
-  return newNode;
 }
 
 /// This pass currently supports one and only one code pattern:
@@ -188,7 +183,7 @@ struct InsertExtraStoreOps : public OpRewritePattern<NodeOp> {
       }
       oldBuffers.push_back(output);
     }
-    if (hasChanged) auto newNode = rebuildNodeOpRecursively(node, oldBuffers, newBuffers, rewriter);
+    if (hasChanged) rebuildNodeOpRecursively(node, oldBuffers, newBuffers, rewriter);
     return success(hasChanged);
   }
 };

@@ -18,9 +18,9 @@ using namespace mlir;
 using namespace scalehls;
 
 static llvm::cl::opt<bool> emitVitisDirectives("emit-vitis-directives",
-                                               llvm::cl::init(false));
+                                               llvm::cl::init(true));
 static llvm::cl::opt<bool> enforceFalseDependency("enforce-false-dependency",
-                                                  llvm::cl::init(false));
+                                                  llvm::cl::init(true));
 
 //===----------------------------------------------------------------------===//
 // Utils
@@ -726,7 +726,7 @@ void ModuleEmitter::emitPrimMul(PrimMulOp op) {
       emitArrayDecl(op.getC());
       os << ";\n";
 
-      indent() << "#pragma HLS array_partition variable=";
+      indent() << "#pragma HLS ARRAY_PARTITION variable=";
       emitValue(op.getC());
       os << " complete dim=0\n";
     }
@@ -1645,7 +1645,7 @@ unsigned ModuleEmitter::emitNestedLoopHeader(Value val) {
       // TODO: More precise control here. Now we assume vectors are always
       // completely partitioned at all dimensions.
       if (type.isa<VectorType>()) {
-        indent() << "#pragma HLS array_partition variable=";
+        indent() << "#pragma HLS ARRAY_PARTITION variable=";
         emitValue(val);
         os << " complete dim=0\n";
       }
@@ -1740,7 +1740,7 @@ void ModuleEmitter::emitArrayDirectives(Value memref) {
       emitPragmaFlag = true;
 
       // FIXME: How to handle external memories?
-      indent() << "#pragma HLS array_partition";
+      indent() << "#pragma HLS ARRAY_PARTITION";
       os << " variable=";
       emitValue(memref);
 
@@ -1769,7 +1769,7 @@ void ModuleEmitter::emitArrayDirectives(Value memref) {
     emitPragmaFlag = true;
 
     if (emitVitisDirectives.getValue()) {
-      indent() << "#pragma HLS bind_storage";
+      indent() << "#pragma HLS BIND_STORAGE";
       os << " variable=";
       emitValue(memref);
 
@@ -1812,7 +1812,7 @@ void ModuleEmitter::emitArrayDirectives(Value memref) {
         break;
       }
     } else {
-      indent() << "#pragma HLS resource";
+      indent() << "#pragma HLS RESOURCE";
       os << " variable=";
       emitValue(memref);
 
