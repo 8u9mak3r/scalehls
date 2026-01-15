@@ -91,7 +91,7 @@ struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
     /// TODO: What about reshape-type operations
     if (op->hasOneUse()) {
       for (auto user : op->getUsers()) {
-        if (isa<DispatchOp>(user->getParentOp())) {
+        if (isa<DispatchOp>(user->getParentOp()) && isa<YieldOp>(user)) {
           op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
           fuseOpsIntoTask({op}, rewriter);
           return success();
@@ -103,6 +103,20 @@ struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
   }
 };
 } // namespace
+
+// static bool isSmallGeneric(Operation* op) {
+//   if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+//     if (genericOp.getNumInputs() == 1 && genericOp.getNumOutputs() == 1
+//         && genericOp.getNumParallelLoops() == genericOp.getNumLoops()
+//         && llvm::hasSingleElement(genericOp.getBody()->without_terminator()))
+//       return true;
+    
+//     return false;
+//   }
+
+//   // return true if the input op is not even a generic at all
+//   return true;
+// }
 
 namespace {
 /// This pattern will forward fuse ops with the specified type.
@@ -117,13 +131,13 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
     auto DT = DominanceInfo();
 
     auto builder = OpBuilder(rewriter.getContext());
-    bool noTaskUsers = true;
-                      
+    // unsigned numOfUsers = 0;
+    // SmallVector<std::pair<OpOperand&, TaskOp>> taskUsers;
+
     /// if the result of the operation to be forward fused has multiple consumers
     /// then generate one copy for each and replace the corresponding use of the result
     for (auto& use : llvm::make_early_inc_range(op->getUses())) {
       if (auto task = dyn_cast<TaskOp>(use.getOwner()->getParentOp())) {
-        noTaskUsers = false;
         builder.setInsertionPoint(op);
         auto clone = cast<OpType>(builder.clone(*op));
         
@@ -135,7 +149,34 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
       }
     }
 
-    if (noTaskUsers) return failure();
+    // for (auto& use : llvm::make_early_inc_range(op->getUses())) {
+    //   numOfUsers += 1;
+    //   if (auto task = dyn_cast<TaskOp>(use.getOwner()->getParentOp())) 
+    //     taskUsers.push_back({use, task});
+    // }
+
+    // if (taskUsers.empty()) return failure();
+
+    // if (!isSmallGeneric(op) && numOfUsers > 1) {
+    //   op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
+    //   fuseOpsIntoTask({op}, rewriter);
+    //   return success();
+    // }
+
+    // for (auto p : taskUsers) {
+    //   auto& use = p.first;
+    //   auto task = p.second;
+
+    //   builder.setInsertionPoint(op);
+    //   auto clone = cast<OpType>(builder.clone(*op));
+        
+    //   auto cloneResult = clone->getResult(0);
+
+    //   use.set(cloneResult);
+
+    //   fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
+    // }
+
     if (op->use_empty()) rewriter.eraseOp(op);
     return success();
   }

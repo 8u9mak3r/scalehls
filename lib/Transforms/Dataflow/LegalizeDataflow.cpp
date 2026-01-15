@@ -62,6 +62,8 @@ struct FuseMultiConsumer : public OpRewritePattern<ScheduleOp> {
         // llvm::outs() << "merged " << nodesToMerge.size() << "\n";
         llvm::sort(nodesToMerge,
                    [&](NodeOp a, NodeOp b) { return domInfo.dominates(a, b); });
+        nodesToMerge.pop_back();
+        if (nodesToMerge.size() <= 1) continue;
         auto newNode = fuseNodeOps(nodesToMerge, rewriter);
         newNode.setLevelAttr(rewriter.getI32IntegerAttr(p.first));
         hasChanged = true;
@@ -92,7 +94,10 @@ static void collectBypassNodes(
         continue;
 
       SmallVector<std::pair<unsigned, NodeOp>, 4> bypassNodes;
-      for (auto consumer : getDependentConsumers(output, node)) {
+      auto dependentConsumers = getDependentConsumers(output, node);
+      if (dependentConsumers.size() < 2) continue;
+
+      for (auto consumer : dependentConsumers) {
         auto diff = node.getLevel().value() - consumer.getLevel().value();
         if (diff > 1)
           bypassNodes.push_back({diff, consumer});
@@ -108,7 +113,7 @@ static void collectBypassNodes(
   if (maxDiff == 1)
     return;
 
-  for (auto level = targetLevel - 1; level >= targetLevel - maxDiff; --level) {
+  for (auto level = targetLevel - 1; level >= targetLevel - maxDiff && level != UINT32_MAX; --level) {
     if (!mergedLevels.insert(level).second)
       continue;
     // llvm::outs() << "---------- " << level << "\n";
@@ -155,9 +160,10 @@ struct FuseBypassPath : public OpRewritePattern<ScheduleOp> {
       // llvm::outs() << "merged " << nodesToMerge.size() << "\n";
       llvm::sort(nodesToMerge,
                  [&](NodeOp a, NodeOp b) { return domInfo.dominates(a, b); });
+      unsigned level = nodesToMerge.front().getLevel().value();
       auto newNode = fuseNodeOps(nodesToMerge, rewriter);
       newNode.setLevelAttr(
-          rewriter.getI32IntegerAttr(nodesToMerge.front().getLevel().value()));
+          rewriter.getI32IntegerAttr(level));
       hasChanged = true;
     }
     return success(hasChanged);
@@ -203,15 +209,17 @@ struct LegalizeDataflow : public LegalizeDataflowBase<LegalizeDataflow> {
   void runOnOperation() override {
     auto func = getOperation();
     auto context = func.getContext();
+    /// Here comes the real multi-consumer eliminator
 
     // Fuse multi consumer and bypass path dataflow nodes.
     mlir::RewritePatternSet patterns(context);
-    // patterns.add<FuseMultiConsumer>(context);
-    // patterns.add<FuseBypassPath>(context);
-    auto frozenPatterns = FrozenRewritePatternSet(std::move(patterns));
+    patterns.add<FuseMultiConsumer>(context);
+    patterns.add<FuseBypassPath>(context);
+    // auto frozenPatterns = FrozenRewritePatternSet(std::move(patterns));
+    (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
 
     func.walk([&](ScheduleOp schedule) {
-      (void)applyOpPatternsAndFold(schedule, frozenPatterns);
+      // (void)applyOpPatternsAndFold(schedule, frozenPatterns);
 
       if (llvm::all_of(schedule.getOps<NodeOp>(),
                        [](NodeOp node) { return node.getLevel(); }))

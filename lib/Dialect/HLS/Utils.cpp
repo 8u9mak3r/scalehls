@@ -160,20 +160,41 @@ NodeOp scalehls::fuseNodeOps(ArrayRef<NodeOp> nodes,
   block->addArguments(ValueRange(outputs.getArrayRef()), outputLocs);
   block->addArguments(ValueRange(params.getArrayRef()), paramLocs);
 
-  // Inline all nodes into the new node.
+  // 'hls.dataflow.schedule' op expects parent op to be one of 'func.func, affine.for'
+  // I dunno why, so don't ask me
+  rewriter.setInsertionPointToStart(&newNode.getBody().front());
+  auto affineForOp = rewriter.create<AffineForOp>(newNode.getLoc(), 0, 1);
+  auto affineForBlock = affineForOp.getBody();
+
+  auto scheduleInputs = SmallVector<Value>(block->getArguments());
+  auto scheduleArgLocs = SmallVector<Location>();
+  scheduleArgLocs.append(inputLocs);
+  scheduleArgLocs.append(outputLocs);
+  scheduleArgLocs.append(paramLocs);
+
+  rewriter.setInsertionPointToStart(affineForBlock);
+  auto newSchedule = rewriter.create<hls::ScheduleOp>(newNode.getLoc(), scheduleInputs);
+  auto scheduleBlock = rewriter.createBlock(&newSchedule.getBody());
+  scheduleBlock->addArguments(ValueRange(scheduleInputs), scheduleArgLocs);
+
+  BlockAndValueMapping mapper;
+  for (auto p : llvm::zip(newNode.getOperands(), scheduleBlock->getArguments())) 
+    mapper.map(std::get<0>(p), std::get<1>(p));
+  
+  rewriter.setInsertionPointToEnd(scheduleBlock);
   for (auto node : nodes) {
-    auto &nodeOps = node.getBody().front().getOperations();
-    auto &newNodeOps = newNode.getBody().front().getOperations();
-    newNodeOps.splice(newNode.end(), nodeOps);
-    for (auto t : llvm::zip(node.getBody().getArguments(), node.getOperands()))
-      std::get<0>(t).replaceAllUsesWith(std::get<1>(t));
+    rewriter.clone(*node.getOperation(), mapper);
     rewriter.eraseOp(node);
   }
 
-  for (auto t : llvm::zip(newNode.getOperands(), block->getArguments()))
-    std::get<0>(t).replaceUsesWithIf(std::get<1>(t), [&](OpOperand &use) {
-      return newNode->isProperAncestor(use.getOwner());
-    });
+  // newNode.dump();
+  // rewriter.eraseBlock(scheduleBlock);
+  // rewriter.eraseOp(newSchedule);
+
+  // Inline all nodes into the new schedule.
+
+  // Inline all nodes into the new node.
+
   return newNode;
 }
 

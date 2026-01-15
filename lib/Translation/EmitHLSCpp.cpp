@@ -506,22 +506,22 @@ public:
   using HLSVisitorBase::visitOp;
 
   /// Unary expressions.
-  bool visitOp(math::AbsIOp op) { return emitter.emitUnary(op, "abs"), true; }
-  bool visitOp(math::AbsFOp op) { return emitter.emitUnary(op, "abs"), true; }
-  bool visitOp(math::CeilOp op) { return emitter.emitUnary(op, "ceil"), true; }
-  bool visitOp(math::CosOp op) { return emitter.emitUnary(op, "cos"), true; }
-  bool visitOp(math::SinOp op) { return emitter.emitUnary(op, "sin"), true; }
-  bool visitOp(math::TanhOp op) { return emitter.emitUnary(op, "tanh"), true; }
-  bool visitOp(math::SqrtOp op) { return emitter.emitUnary(op, "sqrt"), true; }
+  bool visitOp(math::AbsIOp op) { return emitter.emitUnary(op, "hls::abs"), true; }
+  bool visitOp(math::AbsFOp op) { return emitter.emitUnary(op, "hls::abs"), true; }
+  bool visitOp(math::CeilOp op) { return emitter.emitUnary(op, "hls::ceil"), true; }
+  bool visitOp(math::CosOp op) { return emitter.emitUnary(op, "hls::cos"), true; }
+  bool visitOp(math::SinOp op) { return emitter.emitUnary(op, "hls::sin"), true; }
+  bool visitOp(math::TanhOp op) { return emitter.emitUnary(op, "hls::tanh"), true; }
+  bool visitOp(math::SqrtOp op) { return emitter.emitUnary(op, "hls::sqrt"), true; }
   bool visitOp(math::RsqrtOp op) {
-    return emitter.emitUnary(op, "1.0 / sqrt"), true;
+    return emitter.emitUnary(op, "1.0 / hls::sqrt"), true;
   }
-  bool visitOp(math::ExpOp op) { return emitter.emitUnary(op, "exp"), true; }
-  bool visitOp(math::Exp2Op op) { return emitter.emitUnary(op, "exp2"), true; }
-  bool visitOp(math::LogOp op) { return emitter.emitUnary(op, "log"), true; }
-  bool visitOp(math::Log2Op op) { return emitter.emitUnary(op, "log2"), true; }
+  bool visitOp(math::ExpOp op) { return emitter.emitUnary(op, "hls::exp"), true; }
+  bool visitOp(math::Exp2Op op) { return emitter.emitUnary(op, "hls::exp2"), true; }
+  bool visitOp(math::LogOp op) { return emitter.emitUnary(op, "hls::log"), true; }
+  bool visitOp(math::Log2Op op) { return emitter.emitUnary(op, "hls::log2"), true; }
   bool visitOp(math::Log10Op op) {
-    return emitter.emitUnary(op, "log10"), true;
+    return emitter.emitUnary(op, "hls::log10"), true;
   }
   bool visitOp(arith::NegFOp op) { return emitter.emitUnary(op, "-"), true; }
 
@@ -532,9 +532,9 @@ public:
   bool visitOp(arith::MulFOp op) { return emitter.emitBinary(op, "*"), true; }
   bool visitOp(arith::DivFOp op) { return emitter.emitBinary(op, "/"), true; }
   bool visitOp(arith::RemFOp op) { return emitter.emitBinary(op, "%"), true; }
-  bool visitOp(arith::MaxFOp op) { return emitter.emitMaxMin(op, "max"), true; }
-  bool visitOp(arith::MinFOp op) { return emitter.emitMaxMin(op, "min"), true; }
-  bool visitOp(math::PowFOp op) { return emitter.emitMaxMin(op, "pow"), true; }
+  bool visitOp(arith::MaxFOp op) { return emitter.emitMaxMin(op, "hls::max"), true; }
+  bool visitOp(arith::MinFOp op) { return emitter.emitMaxMin(op, "hls::min"), true; }
+  bool visitOp(math::PowFOp op) { return emitter.emitMaxMin(op, "hls::pow"), true; }
 
   /// Integer binary expressions.
   bool visitOp(arith::CmpIOp op);
@@ -552,16 +552,16 @@ public:
   bool visitOp(arith::ShRSIOp op) { return emitter.emitBinary(op, ">>"), true; }
   bool visitOp(arith::ShRUIOp op) { return emitter.emitBinary(op, ">>"), true; }
   bool visitOp(arith::MaxSIOp op) {
-    return emitter.emitMaxMin(op, "max"), true;
+    return emitter.emitMaxMin(op, "hls::max"), true;
   }
   bool visitOp(arith::MinSIOp op) {
-    return emitter.emitMaxMin(op, "min"), true;
+    return emitter.emitMaxMin(op, "hls::min"), true;
   }
   bool visitOp(arith::MaxUIOp op) {
-    return emitter.emitMaxMin(op, "max"), true;
+    return emitter.emitMaxMin(op, "hls::max"), true;
   }
   bool visitOp(arith::MinUIOp op) {
-    return emitter.emitMaxMin(op, "min"), true;
+    return emitter.emitMaxMin(op, "hls::min"), true;
   }
 
   /// Special expressions.
@@ -1714,16 +1714,32 @@ void ModuleEmitter::emitLoopDirectives(Operation *loop) {
   if (!loopDirect)
     return;
 
-  if (!hasParallelAttr(loop) && !loopDirect.getDataflow() &&
-      enforceFalseDependency.getValue())
-    indent() << "#pragma HLS dependence false\n";
-
   if (loopDirect.getPipeline()) {
     indent() << "#pragma HLS pipeline II=" << loopDirect.getTargetII() << "\n";
-    // if (enforceFalseDependency.getValue())
-    //   indent() << "#pragma HLS dependence false\n";
-  } else if (loopDirect.getDataflow())
-    indent() << "#pragma HLS dataflow\n";
+
+    auto affineLoop = dyn_cast<AffineForOp>(loop);
+    auto writers = affineLoop.getOps<AffineStoreOp>();
+    assert(writers.empty() || llvm::hasSingleElement(writers));
+    AffineStoreOp write;
+    if (!writers.empty()) write = *writers.begin();
+
+    while (getLoopDirective(loop->getParentOp())) loop = loop->getParentOp();
+
+    if (!hasParallelAttr(loop) && !loopDirect.getDataflow() &&
+      enforceFalseDependency.getValue()) {
+      indent() << "#pragma HLS dependence dependent=false type=inter variable=";
+      emitValue(write.getMemRef());
+      indent() << "\n";
+    }
+  } else if (loopDirect.getDataflow()) {
+    indent() << "#pragma HLS pipeline II=1\n";
+    auto func = dyn_cast<func::FuncOp>(loop->getParentOp());
+    auto output = func.getArgument(func.getNumArguments() - 1);
+    indent() << "#pragma HLS dependence dependent=false type=inter variable=";
+    emitValue(output);
+    indent() << "\n";
+
+  }
 }
 
 void ModuleEmitter::emitArrayDirectives(Value memref) {
@@ -2003,8 +2019,6 @@ void ModuleEmitter::emitModule(ModuleOp module) {
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
-
-using namespace std;
 
 )XXX";
 

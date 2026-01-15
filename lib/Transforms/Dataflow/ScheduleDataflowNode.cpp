@@ -37,7 +37,9 @@ struct ALAPScheduleNode : public OpRewritePattern<NodeOp> {
       for (auto consumer : getDependentConsumers(output, node)) {
         if (!consumer.getLevel())
           return failure();
-        level = std::max(level, consumer.getLevel().value() + 1);
+        // Copy makers share the same level with its corresponding consumer
+        level = std::max(level, 
+          consumer->hasAttr("Just Make Copies") ? consumer.getLevel().value() : consumer.getLevel().value() + 1);
       }
     }
     node.setLevelAttr(rewriter.getI32IntegerAttr(level));
@@ -64,6 +66,23 @@ struct ScheduleDataflowNode
     mlir::RewritePatternSet patterns(context);
     patterns.add<ALAPScheduleNode>(context, ignoreViolations.getValue());
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+    patterns.clear();
+
+    // Copy makers are of no use from here
+    func.walk([&](NodeOp node) {
+      if (node->hasAttr("Just Make Copies")) {
+        assert(llvm::hasSingleElement(node.getInputs()));
+        auto input = *node.getInputs().begin();
+
+        for (auto output : llvm::make_early_inc_range(node.getOutputs())) {
+          auto buffer = output.getDefiningOp<BufferOp>();
+          buffer.replaceAllUsesWith(input);
+          buffer.erase();
+        }
+
+        node.erase();
+      }
+    });
   }
 };
 } // namespace
