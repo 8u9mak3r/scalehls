@@ -66,9 +66,11 @@ static SmallString<16> getTypeName(Value val) {
       //   return SmallString<16>(signedness + "int" +
       //                          std::to_string(intType.getWidth()) + "_t");
       // default:
-      return SmallString<16>("ap_" + signedness + "int<" +
-                             std::to_string(intType.getWidth()) + ">");
+      // return SmallString<16>("ap_" + signedness + "int<" +
+      //                        std::to_string(intType.getWidth()) + ">");
+      return SmallString<16>(signedness + "int" + std::to_string(intType.getWidth()) + "_t");
       // }
+      
     }
   } else
     val.getDefiningOp()->emitError("has unsupported type.");
@@ -206,8 +208,9 @@ static SmallString<8> getConstantString(Type type, Attribute attr) {
       signedness = "u";
 
     string.append("(");
-    string.append("ap_" + signedness + "int<" +
-                  std::to_string(intType.getWidth()) + ">)");
+    // string.append("ap_" + signedness + "int<" +
+                  // std::to_string(intType.getWidth()) + ">)");
+    string.append(signedness + "int" + std::to_string(intType.getWidth()) + "_t");
 
     if (intType.isSigned()) {
       auto value = attr.cast<IntegerAttr>().getValue().getSExtValue();
@@ -1885,7 +1888,7 @@ void ModuleEmitter::emitFunctionDirectives(func::FuncOp func,
                                            ArrayRef<Value> portList) {
   // Only top function should emit interface pragmas.
   if (hasTopFuncAttr(func)) {
-    indent() << "#pragma HLS interface s_axilite port=return bundle=ctrl\n";
+    indent() << "#pragma HLS interface s_axilite port=return bundle=ctrl\n\n";
     for (auto &port : portList)
       if (!port.getType().isa<ShapedType, StreamType, AxiType>()) {
         auto name = getName(port);
@@ -1900,8 +1903,14 @@ void ModuleEmitter::emitFunctionDirectives(func::FuncOp func,
     indent() << "#pragma HLS inline\n";
 
   for (auto &port : portList)
-    if (port.getType().isa<MemRefType>())
+    if (port.getType().isa<MemRefType>() && !func->getAttr("inline")) {
+      if (hasTopFuncAttr(func)) {
+        auto name = getName(port);
+        indent() << "#pragma HLS interface mode=bram port=" << name
+                 << "\n";
+      }
       emitArrayDirectives(port);
+    }
 
   auto funcDirect = getFuncDirective(func);
   if (!funcDirect)

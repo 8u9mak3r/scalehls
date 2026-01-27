@@ -162,7 +162,9 @@ def PlaceDataflowBuffer :
 
   let options = [
     Option<"placeExternalBuffer", "place-external-buffer", "bool",
-           /*default=*/"true", "Place buffers in external buffers">
+           /*default=*/"false", "Place buffers in external buffers">,
+    Option<"placeTopFuncArgsOnDram", "place-top-func-args-on-dram", "bool",
+           /*default=*/"false", "Whether to place top func args on DRAM">
   ];
 }
 

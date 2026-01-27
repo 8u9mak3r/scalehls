@@ -284,7 +284,7 @@ entry_5:
 entry_6:
         // Place dataflow buffers.
         pm.addPass(
-            scalehls::createPlaceDataflowBufferPass(opts.placeExternalBuffer));
+            scalehls::createPlaceDataflowBufferPass(opts.placeExternalBuffer, opts.axiInterface));
 
         // if (opts.vectorize) {
         //   pm.addPass(mlir::createSuperVectorizePass({2}));

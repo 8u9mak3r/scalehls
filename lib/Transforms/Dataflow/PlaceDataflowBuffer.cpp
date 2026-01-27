@@ -31,10 +31,10 @@ struct PlaceBuffer : public OpRewritePattern<func::FuncOp> {
     return newType;
   }
 
-  MemRefType getPlacedOnDramType(MemRefType type) const {
+  MemRefType getPlacedOnDramType(MemRefType type, MemoryKind kind) const {
     auto newType = MemRefType::get(type.getShape(), type.getElementType(),
                                    type.getLayout().getAffineMap(),
-                                   (unsigned)MemoryKind::DRAM);
+                                   (unsigned)kind);
     return newType;
   }
 
@@ -42,7 +42,7 @@ struct PlaceBuffer : public OpRewritePattern<func::FuncOp> {
                                 PatternRewriter &rewriter) const override {
     for (auto arg : func.getArguments())
       if (auto type = arg.getType().dyn_cast<MemRefType>())
-        arg.setType(getPlacedOnDramType(type));
+        arg.setType(getPlacedOnDramType(type, placeTopFuncArgsOnDram ? MemoryKind::DRAM : MemoryKind::BRAM_T2P));
 
     func.walk([&](hls::BufferLikeInterface buffer) {
       buffer.getMemref().setType(getPlacedType(
@@ -63,6 +63,7 @@ struct PlaceBuffer : public OpRewritePattern<func::FuncOp> {
 
 private:
   bool placeExternalBuffer;
+  bool placeTopFuncArgsOnDram;
 };
 } // namespace
 
@@ -92,8 +93,9 @@ namespace {
 struct PlaceDataflowBuffer
     : public PlaceDataflowBufferBase<PlaceDataflowBuffer> {
   PlaceDataflowBuffer() = default;
-  explicit PlaceDataflowBuffer(bool argPlaceExternalBuffer) {
+  explicit PlaceDataflowBuffer(bool argPlaceExternalBuffer, bool argPlaceTopFuncArgsOnDram) {
     placeExternalBuffer = argPlaceExternalBuffer;
+    placeTopFuncArgsOnDram = argPlaceTopFuncArgsOnDram;
   }
 
   void runOnOperation() override {
@@ -112,6 +114,6 @@ struct PlaceDataflowBuffer
 } // namespace
 
 std::unique_ptr<Pass>
-scalehls::createPlaceDataflowBufferPass(bool placeExternalBuffer) {
-  return std::make_unique<PlaceDataflowBuffer>(placeExternalBuffer);
+scalehls::createPlaceDataflowBufferPass(bool placeExternalBuffer, bool placeTopFuncArgsOnDram) {
+  return std::make_unique<PlaceDataflowBuffer>(placeExternalBuffer, placeTopFuncArgsOnDram);
 }
