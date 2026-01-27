@@ -85,6 +85,10 @@ def CreateDataflowFromLinalg :
       Pass<"scalehls-create-dataflow-from-linalg", "func::FuncOp"> {
   let summary = "Create dataflow hierarchy from linalg";
   let constructor = "mlir::scalehls::createCreateDataflowFromLinalgPass()";
+  let options = [
+    Option<"greedyFuse", "greedy-fuse", "bool",
+           /*default=*/"true", "Whether to fuse ops into a dataflow task in a greedy pattern">
+  ];
 }
 
 def CreateDataflowFromTosa :

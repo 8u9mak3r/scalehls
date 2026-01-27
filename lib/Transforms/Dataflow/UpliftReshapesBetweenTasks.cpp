@@ -573,6 +573,14 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
         if (isReshaped(srcType, dstType)) {
           if (!isa<linalg::GenericOp>(*iter)) continue;
 
+          /// Codes below is applied to deal with reshape patterns like:
+          /// %0 = <16x64xf32>, %1 = <16x64xf32>            --->    %0 = <16x64xf32>, %1 = <16x8x8xf32>
+          /// %2 = linalg.generic(%0, %1) -> <16x64xf32>    --->    %2 = linalg.generic(%0, %1) -> <16x8x8xf32>
+          /// And target code pattern will be:
+          /// %0 = <16x64xf32>, %1 = <16x8x8xf32>
+          /// %expanded = tensor.expand_shape %0 -> <16x8x8xf32>
+          /// %2 = linalg.generic(%expanded, %1) -> <16x8x8xf32>
+          /// Codes below are just to insert a reshape operation in between to remain consistency in tensor shapes
           auto genericOp = dyn_cast<linalg::GenericOp>(*iter);
           auto definingOp = ops[defineUsePaths[iter - ops.begin()]];
           auto consistencyReshapeOp = getConsistencyReshapeOp(definingOp, genericOp.getOperation(), rewriter);
@@ -584,11 +592,14 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
         for (auto& use : llvm::make_early_inc_range((*iter)->getResult(_).getUses())) {
           auto p = use.getOwner();
           if (isa<linalg::MatmulOp, linalg::BatchMatmulOp, hls::YieldOp>(p) || isReductionTypeGenericOp(p)) continue;
+
+          // We have reshape operations uplifted only once, if needed
+          if (p->hasAttr("Uplifted")) continue;
           // p->dump();
           ops.push_back(p);  
           defineUsePaths[++opsIdx] = iter - ops.begin();
         }
-        // // llvm::dbgs() << "\n";
+        // llvm::dbgs() << "\n";
         _ = 0;
       }
 
@@ -624,6 +635,7 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
             taskOp->getResult(resultIdx), 
             getReassociationIndicesForReshape(srcType, dstTypeUniformedWithSrc).value()
           );
+          upliftedExpandShapeOp->setAttr("Uplifted", rewriter.getBoolAttr(true));
 
           // llvm::dbgs() << "Uplifted ExpandShape:\n";
           // upliftedExpandShapeOp.dump();
@@ -648,6 +660,7 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
             emptyOp.getResult(),
             rewriter.getDenseI64ArrayAttr(computePermutation(srcType, dstTypeUniformedWithSrc).value())
           );
+          upliftedTransposeOp->setAttr("Uplifted", rewriter.getBoolAttr(true));
 
           // llvm::dbgs() << "Uplifted Transpose:\n";
           // emptyOp.dump();
@@ -668,6 +681,7 @@ struct WalkOverTasksAndUpliftReshapeOps : public OpRewritePattern<hls::TaskOp> {
             taskOp->getResult(resultIdx),
             getReassociationIndicesForCollapse(srcType.getShape(), dstTypeUniformedWithSrc.getShape()).value()
           );
+          upliftedCollapseShapeOp->setAttr("Uplifted", rewriter.getBoolAttr(true));
 
           // llvm::dbgs() << "Uplifted CollapseShape:\n";
           // upliftedCollapseShapeOp.dump();

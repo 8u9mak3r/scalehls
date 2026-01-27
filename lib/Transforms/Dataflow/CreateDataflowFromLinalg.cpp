@@ -104,20 +104,6 @@ struct OutlineRootFinalOp : public OpRewritePattern<linalg::GenericOp> {
 };
 } // namespace
 
-// static bool isSmallGeneric(Operation* op) {
-//   if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
-//     if (genericOp.getNumInputs() == 1 && genericOp.getNumOutputs() == 1
-//         && genericOp.getNumParallelLoops() == genericOp.getNumLoops()
-//         && llvm::hasSingleElement(genericOp.getBody()->without_terminator()))
-//       return true;
-    
-//     return false;
-//   }
-
-//   // return true if the input op is not even a generic at all
-//   return true;
-// }
-
 namespace {
 /// This pattern will forward fuse ops with the specified type.
 template <typename OpType>
@@ -148,34 +134,6 @@ struct ForwardFuseOp : public OpRewritePattern<OpType> {
         fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
       }
     }
-
-    // for (auto& use : llvm::make_early_inc_range(op->getUses())) {
-    //   numOfUsers += 1;
-    //   if (auto task = dyn_cast<TaskOp>(use.getOwner()->getParentOp())) 
-    //     taskUsers.push_back({use, task});
-    // }
-
-    // if (taskUsers.empty()) return failure();
-
-    // if (!isSmallGeneric(op) && numOfUsers > 1) {
-    //   op->setAttr("Actual Consumer", rewriter.getBoolAttr(true));
-    //   fuseOpsIntoTask({op}, rewriter);
-    //   return success();
-    // }
-
-    // for (auto p : taskUsers) {
-    //   auto& use = p.first;
-    //   auto task = p.second;
-
-    //   builder.setInsertionPoint(op);
-    //   auto clone = cast<OpType>(builder.clone(*op));
-        
-    //   auto cloneResult = clone->getResult(0);
-
-    //   use.set(cloneResult);
-
-    //   fuseOpsIntoTask({clone, task}, rewriter, /*insertToLastOp=*/true);
-    // }
 
     if (op->use_empty()) rewriter.eraseOp(op);
     return success();
@@ -221,8 +179,8 @@ populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
   auto context = patterns.getContext();
 
   /// Normally, generics are all elementwise-type ones and broadcast-type ones excluding reduction-type ones, which are all fusable
-  patterns.add<ForwardFuseOp<linalg::GenericOp>>(context);
-  patterns.add<ForwardFuseOp<linalg::TransposeOp>>(context);
+  // patterns.add<ForwardFuseOp<linalg::GenericOp>>(context);
+  // patterns.add<ForwardFuseOp<linalg::TransposeOp>>(context);
   patterns.add<ForwardFuseOp<linalg::FillOp>>(context);
   patterns.add<ForwardFuseOp<tensor::EmptyOp>>(context);
   patterns.add<ForwardFuseOp<tensor::PadOp>>(context);
@@ -237,6 +195,9 @@ populateForwardBackwardFusePatterns(mlir::RewritePatternSet &patterns) {
 namespace {
 struct CreateDataflowFromLinalg
     : public CreateDataflowFromLinalgBase<CreateDataflowFromLinalg> {
+  CreateDataflowFromLinalg() = default;
+  explicit CreateDataflowFromLinalg(bool argGreedyFuse) { greedyFuse = argGreedyFuse; }
+
   void runOnOperation() override {
     auto func = getOperation();
     auto context = func.getContext();
@@ -262,6 +223,15 @@ struct CreateDataflowFromLinalg
     patterns.add<OutlineRootReductionTypeGenericOp>(context);
     patterns.add<OutlineRootOp<linalg::ReduceOp>>(context);
     patterns.add<OutlineRootFinalOp>(context);
+
+    if (greedyFuse) {
+      patterns.add<ForwardFuseOp<linalg::GenericOp>>(context);
+      patterns.add<ForwardFuseOp<linalg::TransposeOp>>(context);
+    } else {
+      patterns.add<OutlineRootOp<linalg::GenericOp>>(context);
+      patterns.add<ForwardFuseOp<linalg::TransposeOp>>(context);
+      // patterns.add<ForwardFuseGenericOp>(context);
+    }
     populateForwardBackwardFusePatterns(patterns);
     (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
     patterns.clear();
@@ -269,7 +239,7 @@ struct CreateDataflowFromLinalg
 };
 } // namespace
 
-std::unique_ptr<Pass> scalehls::createCreateDataflowFromLinalgPass() {
-  return std::make_unique<CreateDataflowFromLinalg>();
+std::unique_ptr<Pass> scalehls::createCreateDataflowFromLinalgPass(bool greedyFuse) {
+  return std::make_unique<CreateDataflowFromLinalg>(greedyFuse);
 }
 

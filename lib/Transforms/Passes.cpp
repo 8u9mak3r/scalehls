@@ -99,6 +99,10 @@ struct ScaleFlowPyTorchPipelineOptions
       *this, "loop-unroll-factor", llvm::cl::init(0),
       llvm::cl::desc("The overall loop unrolling factor (set 0 to disable)")};
 
+  Option<bool> greedyFuse{
+      *this, "greedy-fuse", llvm::cl::init(true),
+      llvm::cl::desc("Whether to fuse ops into a dataflow task in a greedy pattern")};
+
   Option<bool> complexityAware{
       *this, "complexity-aware", llvm::cl::init(true),
       llvm::cl::desc("Whether to consider node complexity in the transform")};
@@ -229,7 +233,7 @@ entry_1:
 entry_2:         
         // Linalg optimization.
         pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
-        pm.addPass(scalehls::createCreateDataflowFromLinalgPass());
+        pm.addPass(scalehls::createCreateDataflowFromLinalgPass(opts.greedyFuse));
         pm.addPass(scalehls::createUpliftReshapesBetweenTasksPass());
         pm.addPass(mlir::createConvertTensorToLinalgPass());
         pm.addPass(mlir::createCanonicalizerPass());

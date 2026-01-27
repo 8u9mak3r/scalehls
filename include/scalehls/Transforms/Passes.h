@@ -49,7 +49,7 @@ std::unique_ptr<Pass> createBufferizeDataflowPass();
 std::unique_ptr<Pass>
 createConvertDataflowToFuncPass(bool splitExternalAccess = true);
 std::unique_ptr<Pass> createCreateDataflowFromTosaPass();
-std::unique_ptr<Pass> createCreateDataflowFromLinalgPass();
+std::unique_ptr<Pass> createCreateDataflowFromLinalgPass(bool greedyFuse = true);
 std::unique_ptr<Pass> createUpliftReshapesBetweenTasksPass();
 std::unique_ptr<Pass> createGrandFusionPass();
 std::unique_ptr<Pass> createCreateDataflowFromAffinePass();
