@@ -132,6 +132,8 @@ NodeOp scalehls::fuseNodeOps(ArrayRef<NodeOp> nodes,
   llvm::SetVector<Value> params;
   llvm::SmallVector<Location, 8> paramLocs;
 
+  llvm::SetVector<hls::BufferOp> intermediateBufs;
+
   for (auto node : nodes) {
     for (auto output : node.getOutputs())
       if (outputs.insert(output))
@@ -142,13 +144,20 @@ NodeOp scalehls::fuseNodeOps(ArrayRef<NodeOp> nodes,
   }
   for (auto node : nodes)
     for (auto input : llvm::enumerate(node.getInputs())) {
-      if (outputs.count(input.value()))
+      if (outputs.count(input.value())) {
+        intermediateBufs.insert(input.value().getDefiningOp<hls::BufferOp>());
         continue;
+      }
       if (inputs.insert(input.value())) {
         inputLocs.push_back(input.value().getLoc());
         inputTaps.push_back(node.getInputTap(input.index()));
       }
     }
+
+  for (auto buffer : intermediateBufs) {
+    outputs.erase(llvm::find(outputs, buffer.getResult()));
+    outputLocs.pop_back();
+  }
 
   // Construct the new node after the last node.
   rewriter.setInsertionPointAfter(nodes.back());
@@ -173,10 +182,13 @@ NodeOp scalehls::fuseNodeOps(ArrayRef<NodeOp> nodes,
   scheduleArgLocs.append(paramLocs);
 
   rewriter.setInsertionPointToStart(affineForBlock);
-  auto newSchedule = rewriter.create<hls::ScheduleOp>(newNode.getLoc(), scheduleInputs);
+  auto newSchedule = rewriter.create<hls::ScheduleOp>(affineForOp.getLoc(), scheduleInputs);
   auto scheduleBlock = rewriter.createBlock(&newSchedule.getBody());
   scheduleBlock->addArguments(ValueRange(scheduleInputs), scheduleArgLocs);
 
+  for (auto buffer : intermediateBufs) 
+    buffer->moveBefore(scheduleBlock, scheduleBlock->begin());
+  
   BlockAndValueMapping mapper;
   for (auto p : llvm::zip(newNode.getOperands(), scheduleBlock->getArguments())) 
     mapper.map(std::get<0>(p), std::get<1>(p));
@@ -188,12 +200,6 @@ NodeOp scalehls::fuseNodeOps(ArrayRef<NodeOp> nodes,
   }
 
   // newNode.dump();
-  // rewriter.eraseBlock(scheduleBlock);
-  // rewriter.eraseOp(newSchedule);
-
-  // Inline all nodes into the new schedule.
-
-  // Inline all nodes into the new node.
 
   return newNode;
 }
