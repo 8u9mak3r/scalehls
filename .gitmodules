@@ -4,3 +4,6 @@
 [submodule "samples/pytorch/llms"]
 	path = samples/pytorch/llms
 	url = git@github.com:8u9mak3r/SeekDeeper.git
+[submodule "buddy-mlir"]
+	path = buddy-mlir
+	url = git@github.com:8u9mak3r/buddy-mlir.git
